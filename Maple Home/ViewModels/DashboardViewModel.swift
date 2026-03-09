@@ -42,18 +42,43 @@ final class DashboardViewModel {
     var sections: [DashboardSection] {
         let exposed = entities.values.filter { $0.isExposed }
 
-        // Group by entity category (Control, Sensor, Input, Automation, Presence)
-        return EntityCategory.allCases.compactMap { category in
-            let categoryEntities = exposed.filter { $0.domain.category == category }
-            guard !categoryEntities.isEmpty else { return nil }
-            let sorted = sortEntities(categoryEntities)
+        // Group by area (room-based layout)
+        var areaGroups: [String: [HAEntity]] = [:]
+        var noArea: [HAEntity] = []
+
+        for entity in exposed {
+            if let areaId = entity.areaId {
+                areaGroups[areaId, default: []].append(entity)
+            } else {
+                noArea.append(entity)
+            }
+        }
+
+        var result: [DashboardSection] = areas.compactMap { area in
+            guard let entities = areaGroups[area.id], !entities.isEmpty else { return nil }
             return DashboardSection(
-                id: category.rawValue,
-                category: category,
-                entities: sorted,
-                isCollapsed: collapsedAreaIds.contains(category.rawValue)
+                id: area.id,
+                areaName: area.name,
+                entities: sortEntities(entities),
+                isCollapsed: collapsedAreaIds.contains(area.id)
             )
         }
+
+        if !noArea.isEmpty {
+            result.append(DashboardSection(
+                id: "_unassigned",
+                areaName: "Other",
+                entities: sortEntities(noArea),
+                isCollapsed: collapsedAreaIds.contains("_unassigned")
+            ))
+        }
+
+        return result
+    }
+
+    func areaName(for entity: HAEntity) -> String? {
+        guard let areaId = entity.areaId else { return nil }
+        return areas.first { $0.id == areaId }?.name
     }
 
     var activeCount: Int {

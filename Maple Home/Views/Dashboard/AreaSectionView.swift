@@ -4,65 +4,32 @@ struct AreaSectionView: View {
     @Environment(DashboardViewModel.self) private var vm
     let section: DashboardSection
 
-    // MARK: - Adaptive Columns
-
-    private var columns: [GridItem] {
-        #if os(macOS)
-        return Array(repeating: GridItem(.flexible(), spacing: Spacing.sp3), count: 4)
-        #else
-        let baseColumns: [GridItem] = {
-            if UIDevice.current.userInterfaceIdiom == .pad {
-                return Array(repeating: GridItem(.flexible(), spacing: Spacing.sp3), count: 3)
-            } else {
-                return Array(repeating: GridItem(.flexible(), spacing: Spacing.sp3), count: 2)
-            }
-        }()
-        return baseColumns
-        #endif
-    }
-
-    private var wideColumns: [GridItem] {
-        #if os(macOS)
-        return Array(repeating: GridItem(.flexible(), spacing: Spacing.sp3), count: 2)
-        #else
-        if UIDevice.current.userInterfaceIdiom == .pad {
-            return Array(repeating: GridItem(.flexible(), spacing: Spacing.sp3), count: 2)
-        } else {
-            return [GridItem(.flexible())]
-        }
-        #endif
-    }
-
     // MARK: - Body
 
     var body: some View {
         Section {
             if !section.isCollapsed {
-                // Section gradient rail
-                sectionRail
+                let standardEntities = section.entities.filter { !$0.domain.controlStyle.isFullWidth }
+                let fullWidthEntities = section.entities.filter { $0.domain.controlStyle.isFullWidth }
 
-                let halfEntities = section.entities.filter { !$0.domain.controlStyle.isFullWidth }
-                let fullEntities = section.entities.filter { $0.domain.controlStyle.isFullWidth }
-
-                // Standard-width grid (toggles, sensors, actions, selects, sliders, timers)
-                if !halfEntities.isEmpty {
-                    LazyVGrid(columns: columns, spacing: Spacing.sp3) {
-                        ForEach(halfEntities) { entity in
+                // Standard-width cards in grid
+                if !standardEntities.isEmpty {
+                    LazyVGrid(columns: columns, spacing: MapleSpacing.s3) {
+                        ForEach(standardEntities) { entity in
                             EntityCardView(entity: entity)
-                                .frame(height: CardSize.standard)
                         }
                     }
-                    .padding(.horizontal, Spacing.sp4)
+                    .padding(.horizontal, MapleSpacing.s6)
                 }
 
-                // Full-width cards (climate, media, cover, light)
-                if !fullEntities.isEmpty {
-                    LazyVGrid(columns: wideColumns, spacing: Spacing.sp3) {
-                        ForEach(fullEntities) { entity in
+                // Full-width cards
+                if !fullWidthEntities.isEmpty {
+                    VStack(spacing: MapleSpacing.s3) {
+                        ForEach(fullWidthEntities) { entity in
                             EntityCardView(entity: entity)
                         }
                     }
-                    .padding(.horizontal, Spacing.sp4)
+                    .padding(.horizontal, MapleSpacing.s6)
                 }
             }
         } header: {
@@ -70,7 +37,21 @@ struct AreaSectionView: View {
         }
     }
 
-    // MARK: - Section Header (numbered, styled like mockup)
+    // MARK: - Adaptive Columns
+
+    private var columns: [GridItem] {
+        #if os(macOS)
+        return Array(repeating: GridItem(.flexible(), spacing: MapleSpacing.s3), count: 4)
+        #else
+        if UIDevice.current.userInterfaceIdiom == .pad {
+            return Array(repeating: GridItem(.flexible(), spacing: MapleSpacing.s3), count: 3)
+        } else {
+            return Array(repeating: GridItem(.flexible(), spacing: MapleSpacing.s3), count: 2)
+        }
+        #endif
+    }
+
+    // MARK: - Room Section Header
 
     private var sectionHeader: some View {
         Button {
@@ -78,65 +59,36 @@ struct AreaSectionView: View {
                 vm.setCollapsed(!section.isCollapsed, for: section.id)
             }
         } label: {
-            VStack(alignment: .leading, spacing: Spacing.sp3) {
-                HStack(alignment: .firstTextBaseline, spacing: Spacing.sp3) {
-                    // Section number
-                    Text(section.category.sectionNumber)
-                        .font(.merriweather(size: 11, weight: .bold))
-                        .tracking(0.6)
-                        .foregroundStyle(section.category.color)
+            VStack(alignment: .leading, spacing: 0) {
+                HStack(alignment: .lastTextBaseline, spacing: MapleSpacing.s4) {
+                    Text(section.areaName)
+                        .font(MapleFont.displayBold(22))
+                        .foregroundStyle(Color.mapleT1)
 
-                    // Section title
-                    Text(section.category.title)
-                        .font(.merriweather(size: 24, weight: .black))
-                        .foregroundStyle(Color.textPrimary)
+                    Text("\(section.entityCount)")
+                        .font(MapleFont.bodyLight(12))
+                        .foregroundColor(.mapleT3)
 
                     Spacer()
 
-                    // Collapse chevron
                     Image(systemName: "chevron.right")
                         .font(.system(size: 11, weight: .semibold))
-                        .foregroundStyle(Color.textFaint)
+                        .foregroundStyle(Color.mapleT4)
                         .rotationEffect(.degrees(section.isCollapsed ? 0 : 90))
                         .animation(.easeInOut(duration: 0.25), value: section.isCollapsed)
                 }
+                .padding(.bottom, MapleSpacing.s3)
 
-                // Subtitle (entity types)
-                Text(section.category.subtitle)
-                    .font(.lato(size: 12, weight: .light))
-                    .foregroundStyle(Color.textMuted)
-
-                // Bottom border
-                Divider()
+                // Accent underline
+                Rectangle()
+                    .fill(Color.mapleBorderStrong)
+                    .frame(height: 1)
             }
-            .padding(.horizontal, Spacing.sp4)
-            .padding(.top, Spacing.sp6)
-            .padding(.bottom, Spacing.sp2)
+            .padding(.horizontal, MapleSpacing.s6)
+            .padding(.top, MapleSpacing.s7)
+            .padding(.bottom, MapleSpacing.s3)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
     }
-
-    // MARK: - Gradient Rail
-
-    private var sectionRail: some View {
-        RoundedRectangle(cornerRadius: 1.5)
-            .fill(
-                LinearGradient(
-                    colors: [section.category.color, section.category.color.opacity(0.08)],
-                    startPoint: .leading,
-                    endPoint: .trailing
-                )
-            )
-            .frame(height: 3)
-            .padding(.horizontal, Spacing.sp4)
-            .padding(.bottom, Spacing.sp6)
-    }
-}
-
-// MARK: - Card Size Constants
-
-enum CardSize {
-    /// Standard height for half-width cards
-    static let standard: CGFloat = 160
 }

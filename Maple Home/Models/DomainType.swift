@@ -5,6 +5,7 @@ import SwiftUI
 enum EntityControlStyle {
     case toggle
     case light
+    case fan
     case slider
     case climate
     case mediaPlayer
@@ -17,7 +18,7 @@ enum EntityControlStyle {
     /// Whether this card type should span full width
     var isFullWidth: Bool {
         switch self {
-        case .climate, .mediaPlayer, .cover, .light:
+        case .climate, .mediaPlayer, .cover, .light, .fan:
             return true
         default:
             return false
@@ -63,8 +64,10 @@ enum DomainType: String, Codable, Equatable {
         switch self {
         case .light:
             return .light
-        case .switch, .fan, .inputBoolean:
+        case .switch, .inputBoolean:
             return .toggle
+        case .fan:
+            return .fan
         case .cover:
             return .cover
         case .climate:

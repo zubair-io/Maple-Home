@@ -10,11 +10,11 @@ struct HAArea: Identifiable, Equatable, Codable {
     }
 }
 
-// MARK: - Dashboard Section
+// MARK: - Dashboard Section (Area-Based)
 
 struct DashboardSection: Identifiable {
     let id: String
-    let category: EntityCategory
+    let areaName: String
     let entities: [HAEntity]
     var isCollapsed: Bool
 

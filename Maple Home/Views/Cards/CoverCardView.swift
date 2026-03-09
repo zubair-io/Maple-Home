@@ -1,116 +1,93 @@
 import SwiftUI
 
-// MARK: - Cover Card View
-
 struct CoverCardView: View {
     let entity: HAEntity
-    @Environment(DashboardViewModel.self) private var viewModel
+    @Environment(DashboardViewModel.self) private var vm
 
-    @State private var positionValue: Double = 0
-    @State private var isDragging = false
+    @State private var position: Double = 0
     @State private var debounceTask: Task<Void, Never>?
 
-    private var position: Int { entity.attributes.currentPosition ?? 0 }
-    private var displayPosition: Int {
-        isDragging ? Int(positionValue) : position
-    }
+    private var areaName: String? { vm.areaName(for: entity) }
 
-    private var iconName: String {
-        entity.isOn ? entity.domain.activeSymbol : entity.domain.inactiveSymbol
+    private var badgeText: String {
+        position > 95 ? "OPEN" : position < 5 ? "CLOSED" : "PARTIAL"
+    }
+    private var badgeStyle: MapleBadgeStyle {
+        position > 95 ? .ok : position < 5 ? .off : .info
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: Spacing.sp3) {
-            // Header
-            HStack(spacing: Spacing.sp3) {
-                Image(systemName: iconName)
-                    .font(.system(size: 24))
-                    .foregroundStyle(entity.isOn ? entity.domain.accentColor : .entityInactive)
-                    .frame(width: 32, alignment: .center)
+        MapleCard(category: .control) {
+            MapleCardHeader(
+                entityType: "cover",
+                name: entity.name,
+                area: areaName,
+                badgeStyle: badgeStyle,
+                badgeText: badgeText
+            )
 
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(entity.name)
-                        .font(.bodySMBold)
-                        .foregroundStyle(Color.textPrimary)
-                        .lineLimit(1)
+            CoverVisual(position: position)
+                .padding(.vertical, MapleSpacing.s3)
 
-                    Text("\(displayPosition)%")
-                        .font(.caption)
-                        .foregroundStyle(Color.textMuted)
+            MapleSlider(
+                value: $position,
+                range: 0...100,
+                label: "Position",
+                valueFormat: { "\(Int($0))%" }
+            )
+            .onChange(of: position) { _, _ in debouncePosition() }
+            .padding(.bottom, MapleSpacing.s4)
+
+            HStack(spacing: MapleSpacing.s2) {
+                Button {
+                    Task { await vm.openCover(entity) }
+                } label: {
+                    Label("Open", systemImage: "chevron.up")
+                        .font(MapleFont.bodyBold(12))
+                        .foregroundColor(.mapleT2)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 10)
+                        .background(Color.mapleSurface2)
+                        .cornerRadius(MapleRadius.sm)
                 }
 
-                Spacer()
-            }
-
-            // Position slider
-            Slider(
-                value: $positionValue,
-                in: 0...100,
-                step: 1
-            ) {
-                EmptyView()
-            } onEditingChanged: { editing in
-                isDragging = editing
-                if !editing {
-                    debouncePosition()
+                Button {
+                    Task { await vm.stopCover(entity) }
+                } label: {
+                    Label("Stop", systemImage: "minus")
+                        .font(MapleFont.bodyBold(12))
+                        .foregroundColor(.white)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 10)
+                        .background(Color.mapleT1)
+                        .cornerRadius(MapleRadius.sm)
                 }
-            }
-            .tint(entity.domain.accentColor)
 
-            // Control buttons
-            HStack(spacing: Spacing.sp3) {
-                Button("Open") {
-                    Task { await viewModel.openCover(entity) }
+                Button {
+                    Task { await vm.closeCover(entity) }
+                } label: {
+                    Label("Close", systemImage: "chevron.down")
+                        .font(MapleFont.bodyBold(12))
+                        .foregroundColor(.mapleT2)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 10)
+                        .background(Color.mapleSurface2)
+                        .cornerRadius(MapleRadius.sm)
                 }
-                .buttonStyle(MapleButtonStyle(variant: .ghost, isFullWidth: false))
-
-                Button("Stop") {
-                    Task { await viewModel.stopCover(entity) }
-                }
-                .buttonStyle(MapleButtonStyle(variant: .ghost, isFullWidth: false))
-
-                Button("Close") {
-                    Task { await viewModel.closeCover(entity) }
-                }
-                .buttonStyle(MapleButtonStyle(variant: .ghost, isFullWidth: false))
-
-                Spacer()
             }
         }
-        .padding(Spacing.sp4)
-        .background(Color.surface)
-        .clipShape(RoundedRectangle(cornerRadius: Radius.lg))
-        .mapleShadow(.sm)
-        .onAppear { positionValue = Double(position) }
-        .onChange(of: entity.attributes.currentPosition) { _, newValue in
-            if !isDragging {
-                positionValue = Double(newValue ?? 0)
-            }
+        .onAppear { position = Double(entity.attributes.currentPosition ?? 0) }
+        .onChange(of: entity.attributes.currentPosition) { _, newVal in
+            position = Double(newVal ?? 0)
         }
     }
 
     private func debouncePosition() {
         debounceTask?.cancel()
         debounceTask = Task {
-            try? await Task.sleep(nanoseconds: 300_000_000)
+            try? await Task.sleep(nanoseconds: 500_000_000)
             guard !Task.isCancelled else { return }
-            await viewModel.setCoverPosition(entity, position: Int(positionValue))
+            await vm.setCoverPosition(entity, position: Int(position))
         }
     }
-}
-
-#Preview {
-    CoverCardView(entity: HAEntity(
-        id: "cover.living_room_blinds",
-        name: "Living Room Blinds",
-        domain: .cover,
-        areaId: nil,
-        state: "open",
-        attributes: HAAttributes(raw: [
-            "current_position": AnyCodable(75)
-        ]),
-        isExposed: true
-    ))
-    .padding()
-    .background(Color.base)
 }

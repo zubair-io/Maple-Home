@@ -1,55 +1,69 @@
 import SwiftUI
 
-// MARK: - Font Extensions
+// MARK: - MapleFont (Design System Typography)
 
-extension Font {
-    /// Merriweather font for editorial display text
-    static func merriweather(size: CGFloat, weight: Font.Weight = .regular, italic: Bool = false) -> Font {
-        // Use system serif as fallback since custom fonts need to be bundled
-        // When Merriweather font files are added to the bundle, switch to .custom()
-        let design: Font.Design = .serif
-        var font = Font.system(size: size, weight: weight, design: design)
-        if italic {
-            font = Font.system(size: size, weight: weight, design: design).italic()
-        }
-        return font
+struct MapleFont {
+    // Display — Merriweather
+    static func displayHero(_ size: CGFloat = 48) -> Font {
+        Font.custom("Merriweather-Black", size: size)
+    }
+    static func displayBold(_ size: CGFloat = 28) -> Font {
+        Font.custom("Merriweather-Bold", size: size)
+    }
+    static func displayLight(_ size: CGFloat = 28) -> Font {
+        Font.custom("Merriweather-LightItalic", size: size)
+    }
+    static func displayRegular(_ size: CGFloat = 16) -> Font {
+        Font.custom("Merriweather-Regular", size: size)
     }
 
-    /// Lato font for UI body text
-    static func lato(size: CGFloat, weight: Font.Weight = .regular) -> Font {
-        // Use system default as fallback since Lato needs to be bundled
-        // When Lato font files are added, switch to .custom()
-        return Font.system(size: size, weight: weight, design: .default)
+    // Body — Lato
+    static func bodyHeavy(_ size: CGFloat = 14) -> Font {
+        Font.custom("Lato-Black", size: size)
     }
+    static func bodyBold(_ size: CGFloat = 14) -> Font {
+        Font.custom("Lato-Bold", size: size)
+    }
+    static func bodyRegular(_ size: CGFloat = 14) -> Font {
+        Font.custom("Lato-Regular", size: size)
+    }
+    static func bodyLight(_ size: CGFloat = 14) -> Font {
+        Font.custom("Lato-Light", size: size)
+    }
+
+    // Convenience labels
+    static var label: Font { bodyBold(11) }
+    static var caption: Font { bodyLight(12) }
+    static var mono: Font { Font.system(size: 12, design: .monospaced) }
 }
 
-// MARK: - Typography Roles
+// MARK: - Backward Compatibility (Font Extensions)
 
 extension Font {
-    /// Dashboard greeting / section hero — Merriweather 900 28pt
-    static let displayLG = Font.merriweather(size: 28, weight: .black)
+    static func merriweather(size: CGFloat, weight: Font.Weight = .regular, italic: Bool = false) -> Font {
+        switch weight {
+        case .black: return MapleFont.displayHero(size)
+        case .bold:  return MapleFont.displayBold(size)
+        default:     return italic ? MapleFont.displayLight(size) : MapleFont.displayRegular(size)
+        }
+    }
 
-    /// Card title / entity name (detail) — Merriweather 700 20pt
-    static let displayMD = Font.merriweather(size: 20, weight: .bold)
+    static func lato(size: CGFloat, weight: Font.Weight = .regular) -> Font {
+        switch weight {
+        case .black: return MapleFont.bodyHeavy(size)
+        case .bold:  return MapleFont.bodyBold(size)
+        case .light: return MapleFont.bodyLight(size)
+        default:     return MapleFont.bodyRegular(size)
+        }
+    }
 
-    /// Area / section header — Lato 700 11pt UC
-    static let label = Font.lato(size: 11, weight: .bold)
-
-    /// Card label (entity name) — Lato 700 13pt
-    static let bodySMBold = Font.lato(size: 13, weight: .bold)
-
-    /// Card value (state readout) — Lato 900 15pt
-    static let bodyMDBold = Font.lato(size: 15, weight: .black)
-
-    /// Unit / secondary — Lato 300 12pt
-    static let caption = Font.lato(size: 12, weight: .light)
-
-    /// Button — Lato 700 14pt
-    static let button = Font.lato(size: 14, weight: .bold)
-
-    /// Attribute key/value — Lato 400 13pt
-    static let bodySM = Font.lato(size: 13, weight: .regular)
-
-    /// Mono (entity IDs, hex) — Courier New 11pt
-    static let mono = Font.system(size: 11, design: .monospaced)
+    static let displayLG   = MapleFont.displayHero(28)
+    static let displayMD   = MapleFont.displayBold(20)
+    static let label       = MapleFont.label
+    static let bodySMBold  = MapleFont.bodyBold(13)
+    static let bodyMDBold  = MapleFont.bodyHeavy(15)
+    static let caption     = MapleFont.caption
+    static let button      = MapleFont.bodyBold(14)
+    static let bodySM      = MapleFont.bodyRegular(13)
+    static let mono        = MapleFont.mono
 }

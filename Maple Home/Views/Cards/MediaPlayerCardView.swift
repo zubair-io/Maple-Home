@@ -1,123 +1,87 @@
 import SwiftUI
 
-// MARK: - Media Player Card View
-
 struct MediaPlayerCardView: View {
     let entity: HAEntity
-    @Environment(DashboardViewModel.self) private var viewModel
+    @Environment(DashboardViewModel.self) private var vm
 
-    @State private var volumeValue: Double = 0
-    @State private var isDraggingVolume = false
+    @State private var volume: Double = 50
     @State private var debounceTask: Task<Void, Never>?
 
+    private var areaName: String? { vm.areaName(for: entity) }
     private var isPlaying: Bool { entity.state == "playing" }
-    private var title: String? { entity.attributes.mediaTitle }
-    private var artist: String? { entity.attributes.mediaArtist }
-    private var volume: Double { entity.attributes.volumeLevel ?? 0 }
+    private var title: String { entity.attributes.mediaTitle ?? "No media" }
+    private var artist: String { entity.attributes.mediaArtist ?? "" }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: Spacing.sp4) {
-            // Media info row
-            HStack(spacing: Spacing.sp3) {
-                // Album art placeholder
-                RoundedRectangle(cornerRadius: Radius.sm)
-                    .fill(Color.entityMedia.opacity(0.15))
-                    .frame(width: 48, height: 48)
-                    .overlay {
-                        Image(systemName: "music.note")
-                            .font(.system(size: 20))
-                            .foregroundStyle(Color.entityMedia)
-                    }
+        MapleCard(category: .control) {
+            MapleCardHeader(
+                entityType: "media_player",
+                name: entity.name,
+                area: areaName,
+                badgeStyle: isPlaying ? .on : .off,
+                badgeText: entity.state.uppercased()
+            )
 
-                // Title & artist
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(title ?? entity.name)
-                        .font(.bodySMBold)
-                        .foregroundStyle(Color.textPrimary)
-                        .lineLimit(1)
+            // Album art placeholder
+            ZStack {
+                RoundedRectangle(cornerRadius: MapleRadius.md, style: .continuous)
+                    .fill(
+                        LinearGradient(
+                            colors: [Color(hex: "#1a1a2e"), Color(hex: "#16213e"), Color(hex: "#0f3460")],
+                            startPoint: .topLeading, endPoint: .bottomTrailing
+                        )
+                    )
+                    .frame(height: 120)
+                Image(systemName: "music.note")
+                    .font(.system(size: 32, weight: .ultraLight))
+                    .foregroundColor(.white.opacity(0.15))
+            }
+            .padding(.bottom, MapleSpacing.s3)
 
-                    Text(artist ?? entity.state.capitalized)
-                        .font(.caption)
-                        .foregroundStyle(Color.textMuted)
-                        .lineLimit(1)
-                }
-
-                Spacer()
+            // Track info
+            Text(title)
+                .font(MapleFont.displayBold(15))
+                .foregroundColor(.mapleT1)
+            if !artist.isEmpty {
+                Text(artist)
+                    .font(MapleFont.bodyLight(12))
+                    .foregroundColor(.mapleT3)
+                    .padding(.top, 2)
             }
 
-            // Transport controls
-            HStack(spacing: Spacing.sp5) {
-                Spacer()
-
-                // Previous
-                Button {
-                    // Previous track — could add a dedicated method
-                } label: {
-                    Image(systemName: "backward.fill")
-                        .font(.system(size: 20))
-                        .foregroundStyle(Color.textPrimary)
-                }
-                .buttonStyle(.plain)
-
-                // Play/Pause
-                Button {
-                    Task { await viewModel.mediaPlayPause(entity) }
-                } label: {
-                    Image(systemName: isPlaying ? "pause.fill" : "play.fill")
-                        .font(.system(size: 28))
-                        .foregroundStyle(Color.textPrimary)
-                }
-                .buttonStyle(.plain)
-
-                // Next
-                Button {
-                    // Next track — could add a dedicated method
-                } label: {
-                    Image(systemName: "forward.fill")
-                        .font(.system(size: 20))
-                        .foregroundStyle(Color.textPrimary)
-                }
-                .buttonStyle(.plain)
-
+            // Controls
+            HStack(spacing: MapleSpacing.s2) {
+                MapleIconButton(systemImage: "backward.end.fill")
+                MapleIconButton(
+                    systemImage: isPlaying ? "pause.fill" : "play.fill",
+                    accent: true,
+                    action: { Task { await vm.mediaPlayPause(entity) } }
+                )
+                MapleIconButton(systemImage: "forward.end.fill")
                 Spacer()
             }
+            .padding(.vertical, MapleSpacing.s3)
 
-            // Volume slider
-            HStack(spacing: Spacing.sp3) {
+            // Volume
+            HStack(spacing: MapleSpacing.s2) {
                 Image(systemName: "speaker.fill")
-                    .font(.system(size: 12))
-                    .foregroundStyle(Color.textMuted)
-
-                Slider(
-                    value: $volumeValue,
-                    in: 0...1,
-                    step: 0.01
-                ) {
-                    EmptyView()
-                } onEditingChanged: { editing in
-                    isDraggingVolume = editing
-                    if !editing {
-                        debounceVolume()
-                    }
-                }
-                .tint(Color.entityMedia)
-
+                    .font(.system(size: 12)).foregroundColor(.mapleT3)
+                MapleSlider(
+                    value: $volume,
+                    range: 0...100,
+                    valueFormat: { "\(Int($0))%" }
+                )
+                .onChange(of: volume) { _, _ in debounceVolume() }
                 Image(systemName: "speaker.wave.3.fill")
-                    .font(.system(size: 12))
-                    .foregroundStyle(Color.textMuted)
+                    .font(.system(size: 12)).foregroundColor(.mapleT3)
             }
         }
-        .padding(Spacing.sp4)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(isPlaying ? Color.fillMedia : Color.surface)
-        .clipShape(RoundedRectangle(cornerRadius: Radius.lg))
-        .mapleShadow(.sm)
-        .onAppear { volumeValue = volume }
-        .onChange(of: entity.attributes.volumeLevel) { _, newValue in
-            if !isDraggingVolume {
-                volumeValue = newValue ?? 0
-            }
-        }
+        .onAppear { syncValues() }
+        .onChange(of: entity.attributes.volumeLevel) { _, _ in syncValues() }
+    }
+
+    private func syncValues() {
+        volume = (entity.attributes.volumeLevel ?? 0.5) * 100
     }
 
     private func debounceVolume() {
@@ -125,25 +89,7 @@ struct MediaPlayerCardView: View {
         debounceTask = Task {
             try? await Task.sleep(nanoseconds: 300_000_000)
             guard !Task.isCancelled else { return }
-            await viewModel.setVolume(entity, level: volumeValue)
+            await vm.setVolume(entity, level: volume / 100)
         }
     }
-}
-
-#Preview {
-    MediaPlayerCardView(entity: HAEntity(
-        id: "media_player.living_room",
-        name: "Living Room Speaker",
-        domain: .mediaPlayer,
-        areaId: nil,
-        state: "playing",
-        attributes: HAAttributes(raw: [
-            "media_title": AnyCodable("Bohemian Rhapsody"),
-            "media_artist": AnyCodable("Queen"),
-            "volume_level": AnyCodable(0.45)
-        ]),
-        isExposed: true
-    ))
-    .padding()
-    .background(Color.base)
 }

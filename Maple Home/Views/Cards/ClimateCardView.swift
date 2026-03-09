@@ -1,139 +1,89 @@
 import SwiftUI
 
-// MARK: - Climate Card View
-
 struct ClimateCardView: View {
     let entity: HAEntity
-    @Environment(DashboardViewModel.self) private var viewModel
+    @Environment(DashboardViewModel.self) private var vm
 
-    private var currentTemp: Double? { entity.attributes.currentTemperature }
-    private var targetTemp: Double? { entity.attributes.targetTemperature }
-    private var hvacModes: [String] { entity.attributes.hvacModes ?? [] }
-    private var currentMode: String { entity.state }
+    @State private var targetTemp: Double = 20
+    @State private var selectedHvacMode: String = ""
+    @State private var debounceTask: Task<Void, Never>?
 
-    private var backgroundFill: Color {
-        switch currentMode {
-        case "cool", "fan_only":
-            return .fillCool
-        case "heat":
-            return .fillHeat
-        case "heat_cool", "auto":
-            return .accentDim
-        default:
-            return Color.surface
+    private var areaName: String? { vm.areaName(for: entity) }
+    private var currentTemp: Double { entity.attributes.currentTemperature ?? 0 }
+    private var hvacModes: [String] { entity.attributes.hvacModes ?? ["off", "heat", "cool", "auto"] }
+
+    private var arcColor: Color {
+        switch entity.state {
+        case "heat": return .mapleAccent
+        case "cool": return .mapleInfo
+        case "auto", "heat_cool": return .mapleSuccess
+        default: return .mapleT3
         }
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: Spacing.sp4) {
-            // Header
-            HStack {
-                Text(entity.name)
-                    .font(.bodySMBold)
-                    .foregroundStyle(Color.textPrimary)
+        MapleCard(category: .control) {
+            MapleCardHeader(
+                entityType: "climate",
+                name: entity.name,
+                area: areaName,
+                badgeStyle: entity.state == "off" ? .off : .info,
+                badgeText: entity.state.uppercased()
+            )
 
-                Spacer()
+            HStack(spacing: MapleSpacing.s6) {
+                MapleArc(
+                    value: currentTemp > 0 ? (currentTemp - 16) / 14 : 0,
+                    label: "\(Int(currentTemp))°",
+                    sublabel: "current",
+                    size: 96,
+                    color: arcColor
+                )
 
-                HvacModePill(mode: currentMode)
+                VStack(alignment: .leading, spacing: MapleSpacing.s2) {
+                    Text("TARGET TEMP")
+                        .font(MapleFont.label)
+                        .kerning(1.0)
+                        .foregroundColor(.mapleT3)
+                    MapleNumberStepper(
+                        value: $targetTemp,
+                        step: 0.5,
+                        range: 16...30,
+                        format: { String(format: "%.1f°C", $0) }
+                    )
+                    .onChange(of: targetTemp) { _, newVal in debounceTemp(newVal) }
+                }
             }
+            .padding(.vertical, MapleSpacing.s2)
 
-            // Temperature display
-            HStack(alignment: .firstTextBaseline, spacing: Spacing.sp4) {
-                // Current temperature
-                if let current = currentTemp {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(formatTemp(current))
-                            .font(.merriweather(size: 32, weight: .bold))
-                            .foregroundStyle(Color.textPrimary)
-
-                        Text("Current")
-                            .font(.caption)
-                            .foregroundStyle(Color.textMuted)
+            VStack(alignment: .leading, spacing: MapleSpacing.s2) {
+                Text("HVAC MODE")
+                    .font(MapleFont.label)
+                    .kerning(1.0)
+                    .foregroundColor(.mapleT3)
+                ModePills(options: hvacModes, selected: $selectedHvacMode, accentStyle: true)
+                    .onChange(of: selectedHvacMode) { _, newMode in
+                        Task { await vm.setHvacMode(entity, mode: newMode) }
                     }
-                }
-
-                Spacer()
-
-                // Target temperature stepper
-                if let target = targetTemp, currentMode != "off" {
-                    HStack(spacing: Spacing.sp3) {
-                        Button {
-                            Task {
-                                await viewModel.setTemperature(entity, temperature: target - 0.5)
-                            }
-                        } label: {
-                            Image(systemName: "minus.circle.fill")
-                                .font(.system(size: 28))
-                                .foregroundStyle(Color.textMuted)
-                        }
-                        .buttonStyle(.plain)
-
-                        VStack(spacing: 2) {
-                            Text(formatTemp(target))
-                                .font(.merriweather(size: 20, weight: .bold))
-                                .foregroundStyle(Color.textPrimary)
-
-                            Text("Target")
-                                .font(.caption)
-                                .foregroundStyle(Color.textMuted)
-                        }
-                        .frame(minWidth: 56)
-
-                        Button {
-                            Task {
-                                await viewModel.setTemperature(entity, temperature: target + 0.5)
-                            }
-                        } label: {
-                            Image(systemName: "plus.circle.fill")
-                                .font(.system(size: 28))
-                                .foregroundStyle(Color.textMuted)
-                        }
-                        .buttonStyle(.plain)
-                    }
-                }
             }
-
-            // Mode picker
-            if !hvacModes.isEmpty {
-                HvacModePickerView(
-                    modes: hvacModes,
-                    activeMode: currentMode,
-                    accentColor: entity.domain.accentColor
-                ) { mode in
-                    Task { await viewModel.setHvacMode(entity, mode: mode) }
-                }
-            }
+            .padding(.vertical, MapleSpacing.s3)
         }
-        .padding(Spacing.sp4)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(backgroundFill)
-        .clipShape(RoundedRectangle(cornerRadius: Radius.lg))
-        .mapleShadow(.sm)
-        .animation(.easeInOut(duration: 0.25), value: currentMode)
+        .onAppear { syncValues() }
+        .onChange(of: entity.attributes.targetTemperature) { _, _ in syncValues() }
+        .onChange(of: entity.state) { _, _ in syncValues() }
     }
 
-    private func formatTemp(_ value: Double) -> String {
-        if value.truncatingRemainder(dividingBy: 1) == 0 {
-            return "\(Int(value))\u{00B0}"
-        }
-        return String(format: "%.1f\u{00B0}", value)
+    private func syncValues() {
+        targetTemp = entity.attributes.targetTemperature ?? 20
+        selectedHvacMode = entity.state
     }
-}
 
-#Preview {
-    ClimateCardView(entity: HAEntity(
-        id: "climate.living_room",
-        name: "Living Room Thermostat",
-        domain: .climate,
-        areaId: nil,
-        state: "heat",
-        attributes: HAAttributes(raw: [
-            "current_temperature": AnyCodable(21.5),
-            "temperature": AnyCodable(23.0),
-            "hvac_modes": AnyCodable(["off", "heat", "cool", "auto"])
-        ]),
-        isExposed: true
-    ))
-    .padding()
-    .background(Color.base)
+    private func debounceTemp(_ temp: Double) {
+        debounceTask?.cancel()
+        debounceTask = Task {
+            try? await Task.sleep(nanoseconds: 500_000_000)
+            guard !Task.isCancelled else { return }
+            await vm.setTemperature(entity, temperature: temp)
+        }
+    }
 }

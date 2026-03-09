@@ -13,6 +13,15 @@
 			</array>
 		</dict>
 	</array>
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<key>NSAllowsLocalNetworking</key>
+		<true/>
+		<key>NSAllowsArbitraryLoads</key>
+		<true/>
+	</dict>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>Casita needs local network access to connect to your Home Assistant instance.</string>
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>remote-notification</string>

@@ -95,7 +95,7 @@ struct EntityDetailControls: View {
     var body: some View {
         VStack(alignment: .leading, spacing: Spacing.sp4) {
             switch entity.domain.controlStyle {
-            case .toggle, .light:
+            case .toggle, .light, .fan:
                 toggleControls
             case .climate:
                 climateControls

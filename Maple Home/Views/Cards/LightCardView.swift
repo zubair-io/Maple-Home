@@ -1,31 +1,18 @@
 import SwiftUI
 
-// MARK: - Light Card View
-
 struct LightCardView: View {
     let entity: HAEntity
-    @Environment(DashboardViewModel.self) private var viewModel
+    @Environment(DashboardViewModel.self) private var vm
 
     @State private var brightnessValue: Double = 0
-    @State private var colorTempValue: Double = 0
-    @State private var isDraggingBrightness = false
-    @State private var isDraggingColorTemp = false
+    @State private var colorTempValue: Double = 4000
     @State private var debounceTask: Task<Void, Never>?
 
     private var isOn: Bool { entity.isOn }
+    private var areaName: String? { vm.areaName(for: entity) }
 
     private var brightnessPercent: Int {
-        if isDraggingBrightness {
-            return Int(round(brightnessValue / 255.0 * 100))
-        }
-        if let brightness = entity.attributes.brightness {
-            return Int(round(Double(brightness) / 255.0 * 100))
-        }
-        return 0
-    }
-
-    private var hasBrightness: Bool {
-        entity.attributes.brightness != nil || isOn
+        Int(round(brightnessValue / 255.0 * 100))
     }
 
     private var hasColorTemp: Bool {
@@ -33,107 +20,51 @@ struct LightCardView: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: Spacing.sp3) {
-            // Header row
-            HStack(spacing: Spacing.sp3) {
-                Image(systemName: isOn ? "lightbulb.fill" : "lightbulb")
-                    .font(.system(size: 24))
-                    .foregroundStyle(isOn ? Color.entityLight : .entityInactive)
-                    .frame(width: 32, alignment: .center)
+        MapleCard(category: .control, isActive: isOn) {
+            MapleCardHeader(
+                entityType: "light",
+                name: entity.name,
+                area: areaName,
+                trailing: AnyView(
+                    MapleToggle(isOn: .init(
+                        get: { isOn },
+                        set: { _ in Task { await vm.toggle(entity) } }
+                    ))
+                )
+            )
+            MapleBadge(text: isOn ? "ON · \(brightnessPercent)%" : "OFF", style: isOn ? .on : .off)
+                .padding(.bottom, MapleSpacing.s4)
 
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(entity.name)
-                        .font(.bodySMBold)
-                        .foregroundStyle(Color.textPrimary)
-                        .lineLimit(1)
+            if isOn {
+                MapleSlider(
+                    value: $brightnessValue,
+                    range: 0...255,
+                    label: "Brightness",
+                    valueFormat: { "\(Int(round($0 / 255.0 * 100)))%" }
+                )
+                .onChange(of: brightnessValue) { _, _ in debounceBrightness() }
+                .padding(.bottom, hasColorTemp ? MapleSpacing.s4 : 0)
 
-                    Text(isOn ? "\(brightnessPercent)%" : "Off")
-                        .font(.caption)
-                        .foregroundStyle(Color.textMuted)
+                if hasColorTemp {
+                    ColorTempSlider(kelvin: $colorTempValue)
+                        .onChange(of: colorTempValue) { _, _ in debounceColorTemp() }
                 }
-
-                Spacer()
-
-                Toggle(isOn: Binding(
-                    get: { isOn },
-                    set: { _, _ in
-                        Task { await viewModel.toggle(entity) }
-                    }
-                )) {
-                    EmptyView()
-                }
-                .labelsHidden()
-                .tint(Color.entityLight)
-            }
-
-            // Brightness slider
-            if hasBrightness {
-                VStack(alignment: .leading, spacing: Spacing.sp1) {
-                    Text("Brightness")
-                        .font(.caption)
-                        .foregroundStyle(Color.textMuted)
-
-                    Slider(
-                        value: $brightnessValue,
-                        in: 0...255,
-                        step: 1
-                    ) {
-                        EmptyView()
-                    } onEditingChanged: { editing in
-                        isDraggingBrightness = editing
-                        if !editing {
-                            debounceBrightness()
-                        }
-                    }
-                    .tint(Color.entityLight)
-                }
-            }
-
-            // Color temperature slider
-            if hasColorTemp {
-                VStack(alignment: .leading, spacing: Spacing.sp1) {
-                    Text("Color Temp")
-                        .font(.caption)
-                        .foregroundStyle(Color.textMuted)
-
-                    Slider(
-                        value: $colorTempValue,
-                        in: 2000...6500,
-                        step: 50
-                    ) {
-                        EmptyView()
-                    } onEditingChanged: { editing in
-                        isDraggingColorTemp = editing
-                        if !editing {
-                            debounceColorTemp()
-                        }
-                    }
-                    .tint(
-                        LinearGradient(
-                            colors: [Color.orange, Color.white, Color.blue.opacity(0.6)],
-                            startPoint: .leading,
-                            endPoint: .trailing
-                        )
-                    )
-                }
+            } else {
+                MapleSlider(
+                    value: .constant(0),
+                    range: 0...255,
+                    label: "Brightness",
+                    valueFormat: { _ in "0%" }
+                )
+                .opacity(0.35)
+                .disabled(true)
             }
         }
-        .padding(Spacing.sp4)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(isOn ? Color.fillLight : Color.surface)
-        .clipShape(RoundedRectangle(cornerRadius: Radius.lg))
-        .mapleShadow(.sm)
-        .animation(.easeInOut(duration: 0.2), value: entity.state)
+        .animation(.spring(response: 0.3, dampingFraction: 0.8), value: isOn)
         .onAppear { syncValues() }
-        .onChange(of: entity.attributes.brightness) { _, _ in
-            if !isDraggingBrightness { syncValues() }
-        }
-        .onChange(of: entity.attributes.colorTempKelvin) { _, _ in
-            if !isDraggingColorTemp { syncValues() }
-        }
+        .onChange(of: entity.attributes.brightness) { _, _ in syncValues() }
+        .onChange(of: entity.attributes.colorTempKelvin) { _, _ in syncValues() }
     }
-
-    // MARK: - Helpers
 
     private func syncValues() {
         brightnessValue = Double(entity.attributes.brightness ?? 0)
@@ -145,7 +76,7 @@ struct LightCardView: View {
         debounceTask = Task {
             try? await Task.sleep(nanoseconds: 300_000_000)
             guard !Task.isCancelled else { return }
-            await viewModel.setBrightness(entity, brightness: Int(brightnessValue))
+            await vm.setBrightness(entity, brightness: Int(brightnessValue))
         }
     }
 
@@ -154,7 +85,7 @@ struct LightCardView: View {
         debounceTask = Task {
             try? await Task.sleep(nanoseconds: 300_000_000)
             guard !Task.isCancelled else { return }
-            await viewModel.setColorTemp(entity, kelvin: Int(colorTempValue))
+            await vm.setColorTemp(entity, kelvin: Int(colorTempValue))
         }
     }
 }
