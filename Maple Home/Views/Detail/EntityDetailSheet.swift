@@ -30,7 +30,9 @@ struct EntityDetailSheet: View {
             }
             .background(Color.base.ignoresSafeArea())
             .navigationTitle(entity.name)
+            #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
+            #endif
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Done") { dismiss() }
@@ -39,8 +41,10 @@ struct EntityDetailSheet: View {
                 }
             }
         }
+        #if os(iOS)
         .presentationDetents([.large])
         .presentationDragIndicator(.visible)
+        #endif
     }
 }
 
@@ -91,7 +95,7 @@ struct EntityDetailControls: View {
     var body: some View {
         VStack(alignment: .leading, spacing: Spacing.sp4) {
             switch entity.domain.controlStyle {
-            case .toggle:
+            case .toggle, .light:
                 toggleControls
             case .climate:
                 climateControls
@@ -124,7 +128,7 @@ struct EntityDetailControls: View {
             Spacer()
             Toggle("", isOn: Binding(
                 get: { entity.isOn },
-                set: { _ in Task { await vm.toggle(entity) } }
+                set: { _, _ in Task { await vm.toggle(entity) } }
             ))
             .tint(entity.domain.accentColor)
             .labelsHidden()
@@ -143,7 +147,7 @@ struct EntityDetailControls: View {
                 }
                 Slider(value: Binding(
                     get: { Double(brightness) / 255.0 },
-                    set: { Task { await vm.setBrightness(entity, brightness: Int($0 * 255)) } }
+                    set: { newValue, _ in Task { await vm.setBrightness(entity, brightness: Int(newValue * 255)) } }
                 ), in: 0...1)
                 .tint(Color.entityLight)
             }
@@ -203,7 +207,13 @@ struct EntityDetailControls: View {
                 Text("Mode")
                     .font(.lato(size: 13, weight: .bold))
                     .foregroundStyle(Color.textSecondary)
-                HvacModePickerView(entity: entity, modes: modes, currentMode: entity.state)
+                HvacModePickerView(
+                    modes: modes,
+                    activeMode: entity.state,
+                    accentColor: entity.domain.accentColor
+                ) { mode in
+                    Task { await vm.setHvacMode(entity, mode: mode) }
+                }
             }
         }
     }
@@ -225,7 +235,7 @@ struct EntityDetailControls: View {
                 }
                 Slider(value: Binding(
                     get: { Double(position) / 100.0 },
-                    set: { Task { await vm.setCoverPosition(entity, position: Int($0 * 100)) } }
+                    set: { newValue, _ in Task { await vm.setCoverPosition(entity, position: Int(newValue * 100)) } }
                 ), in: 0...1)
                 .tint(Color.entityCool)
             }
@@ -284,7 +294,7 @@ struct EntityDetailControls: View {
                         .foregroundStyle(Color.textMuted)
                     Slider(value: Binding(
                         get: { volume },
-                        set: { Task { await vm.setVolume(entity, level: $0) } }
+                        set: { newValue, _ in Task { await vm.setVolume(entity, level: newValue) } }
                     ), in: 0...1)
                     .tint(Color.entityMedia)
                     Image(systemName: "speaker.wave.3.fill")

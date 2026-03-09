@@ -31,7 +31,7 @@ struct DashboardView: View {
                                 AreaSectionView(section: section)
                             }
                         }
-                        .padding(.bottom, Spacing.sp8)
+                        .padding(.bottom, Spacing.sp10)
                     }
                 }
             }
@@ -39,9 +39,11 @@ struct DashboardView: View {
                 await vm.reload()
             }
             .background(Color.base)
+            #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
+            #endif
             .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
+                ToolbarItem(placement: .automatic) {
                     Button {
                         showSettings = true
                     } label: {

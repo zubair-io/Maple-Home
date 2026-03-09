@@ -46,7 +46,7 @@ struct ToggleCardView: View {
             // Toggle
             Toggle(isOn: Binding(
                 get: { isOn },
-                set: { _ in
+                set: { _, _ in
                     Task { await viewModel.toggle(entity) }
                 }
             )) {

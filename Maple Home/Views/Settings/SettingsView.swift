@@ -106,11 +106,15 @@ struct SettingsView: View {
                     }
                 }
             }
+            #if os(iOS)
             .listStyle(.insetGrouped)
+            #endif
             .scrollContentBackground(.hidden)
             .background(Color.base)
             .navigationTitle("Settings")
+            #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
+            #endif
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Done") { dismiss() }
@@ -118,7 +122,7 @@ struct SettingsView: View {
                         .foregroundStyle(Color.accent)
                 }
             }
-            .confirmationDialog("Sign out of Casita?", isPresented: $showSignOutConfirmation, titleVisibility: .visible) {
+            .confirmationDialog("Sign out of Maple Home?", isPresented: $showSignOutConfirmation, titleVisibility: .visible) {
                 Button("Sign Out", role: .destructive) {
                     vm.disconnect()
                     AuthManager.shared.signOut()
@@ -129,8 +133,12 @@ struct SettingsView: View {
                 Text("You'll need to reconnect to your Home Assistant instance.")
             }
         }
+        #if os(iOS)
         .presentationDetents([.medium, .large])
         .presentationDragIndicator(.visible)
+        #else
+        .frame(minWidth: 400, minHeight: 350)
+        #endif
     }
 
     private var statusText: String {

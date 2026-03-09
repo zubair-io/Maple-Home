@@ -1,20 +1,20 @@
 import SwiftUI
 
-// MARK: - Maple Base Tokens
+// MARK: - Maple Base Tokens (adaptive light/dark)
 
 extension Color {
     // Surfaces
-    static let base = Color(red: 242/255, green: 241/255, blue: 239/255)
-    static let surface = Color.white
-    static let surfaceRaised = Color(red: 250/255, green: 250/255, blue: 248/255)
+    static let base = Color("mapleBase", bundle: nil)
+    static let surface = Color("mapleSurface", bundle: nil)
+    static let surfaceRaised = Color("mapleSurfaceRaised", bundle: nil)
     static let overlay = Color.black.opacity(0.8)
 
     // Text
-    static let textPrimary = Color(red: 17/255, green: 17/255, blue: 17/255)
-    static let textSecondary = Color(red: 74/255, green: 74/255, blue: 71/255)
-    static let textMuted = Color(red: 138/255, green: 138/255, blue: 138/255)
-    static let textFaint = Color(red: 196/255, green: 196/255, blue: 192/255)
-    static let textInverse = Color.white
+    static let textPrimary = Color("mapleTextPrimary", bundle: nil)
+    static let textSecondary = Color("mapleTextSecondary", bundle: nil)
+    static let textMuted = Color("mapleTextMuted", bundle: nil)
+    static let textFaint = Color("mapleTextFaint", bundle: nil)
+    static let textInverse = Color("mapleTextInverse", bundle: nil)
 
     // Accent (Maple orange)
     static let accent = Color(red: 232/255, green: 84/255, blue: 10/255)
@@ -22,8 +22,8 @@ extension Color {
     static let accentDim = Color(red: 232/255, green: 84/255, blue: 10/255).opacity(0.10)
 
     // Borders
-    static let border = Color.black.opacity(0.08)
-    static let borderStrong = Color.black.opacity(0.15)
+    static let border = Color("mapleBorder", bundle: nil)
+    static let borderStrong = Color("mapleBorderStrong", bundle: nil)
 
     // Semantic
     static let success = Color(red: 45/255, green: 138/255, blue: 78/255)
@@ -47,6 +47,13 @@ extension Color {
     static let entityMedia = Color(red: 124/255, green: 58/255, blue: 237/255)
     static let entitySwitch = Color(red: 37/255, green: 99/255, blue: 235/255)
     static let entityInactive = Color(red: 138/255, green: 138/255, blue: 138/255)
+
+    // Category Line Colors (transit-map palette)
+    static let categoryControl = Color(red: 232/255, green: 84/255, blue: 10/255)
+    static let categorySensor = Color(red: 29/255, green: 111/255, blue: 164/255)
+    static let categoryInput = Color(red: 45/255, green: 138/255, blue: 78/255)
+    static let categoryAutomation = Color(red: 176/255, green: 125/255, blue: 16/255)
+    static let categoryPresence = Color(red: 114/255, green: 82/255, blue: 160/255)
 
     // Entity State Fills (low-opacity tints)
     static let fillLight = Color(red: 245/255, green: 158/255, blue: 11/255).opacity(0.08)

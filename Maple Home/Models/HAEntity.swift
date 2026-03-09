@@ -9,7 +9,7 @@ struct HAEntity: Identifiable, Equatable {
     let areaId: String?     // nil if not assigned to an area
     var state: String       // raw state string: "on", "off", "22.5", etc.
     var attributes: HAAttributes
-    let isExposed: Bool     // from entity registry / expose list
+    var isExposed: Bool     // from entity registry / expose list
 
     var isAvailable: Bool {
         state != "unavailable" && state != "unknown"

@@ -34,62 +34,26 @@ final class DashboardViewModel {
     var commandError: CommandError?
     var showCommandError: Bool = false
 
-    // Collapse state (persisted)
-    private var collapsedAreaIds: Set<String> {
-        get {
-            let stored = UserDefaults.standard.stringArray(forKey: "collapsedAreas") ?? []
-            return Set(stored)
-        }
-        set {
-            UserDefaults.standard.set(Array(newValue), forKey: "collapsedAreas")
-        }
-    }
+    // Collapse state — tracked by @Observable so sections recompute
+    var collapsedAreaIds: Set<String> = Set(UserDefaults.standard.stringArray(forKey: "collapsedAreas") ?? [])
 
     // MARK: - Derived
 
     var sections: [DashboardSection] {
         let exposed = entities.values.filter { $0.isExposed }
 
-        // Group by area
-        var areaGroups: [String: [HAEntity]] = [:]
-        var noArea: [HAEntity] = []
-
-        for entity in exposed {
-            if let areaId = entity.areaId {
-                areaGroups[areaId, default: []].append(entity)
-            } else {
-                noArea.append(entity)
-            }
-        }
-
-        // Build sections sorted by area name
-        var result: [DashboardSection] = []
-
-        let sortedAreas = areas.sorted { $0.name < $1.name }
-        for area in sortedAreas {
-            if let entities = areaGroups[area.id], !entities.isEmpty {
-                let sorted = sortEntities(entities)
-                result.append(DashboardSection(
-                    id: area.id,
-                    areaName: area.name,
-                    entities: sorted,
-                    isCollapsed: collapsedAreaIds.contains(area.id)
-                ))
-            }
-        }
-
-        // Add "Other" for entities without areas
-        if !noArea.isEmpty {
-            let sorted = sortEntities(noArea)
-            result.append(DashboardSection(
-                id: "other",
-                areaName: "Other",
+        // Group by entity category (Control, Sensor, Input, Automation, Presence)
+        return EntityCategory.allCases.compactMap { category in
+            let categoryEntities = exposed.filter { $0.domain.category == category }
+            guard !categoryEntities.isEmpty else { return nil }
+            let sorted = sortEntities(categoryEntities)
+            return DashboardSection(
+                id: category.rawValue,
+                category: category,
                 entities: sorted,
-                isCollapsed: collapsedAreaIds.contains("other")
-            ))
+                isCollapsed: collapsedAreaIds.contains(category.rawValue)
+            )
         }
-
-        return result
     }
 
     var activeCount: Int {
@@ -107,27 +71,48 @@ final class DashboardViewModel {
     // MARK: - Connection
 
     func connect() async {
+        // Don't connect if already connected or in the process of connecting
+        if connectionState.isConnected || connectionState == .connecting || connectionState == .authenticating {
+            print("[Maple] connect() — skipping, already \(connectionState)")
+            return
+        }
+
         guard let serverURL = AuthManager.shared.serverURL,
               let token = AuthManager.shared.token else {
+            print("[Maple] connect() — no serverURL or token found")
             connectionState = .disconnected
             return
         }
 
+        print("[Maple] connect() — serverURL: \(serverURL.absoluteString), token: \(token.prefix(8))...")
         connectionState = .connecting
 
         do {
             connectionState = .authenticating
+            print("[Maple] Authenticating via WebSocket...")
             let version = try await client.connect(to: serverURL, token: token)
             haVersion = version
             connectionState = .connected(haVersion: version)
+            print("[Maple] Connected! HA version: \(version)")
 
             // Load data
+            print("[Maple] Loading entity registry...")
             try await loadEntityRegistry()
+            print("[Maple] Loading exposed entities...")
             try await loadExposedEntities()
+            print("[Maple] Loading area registry...")
             try await loadAreaRegistry()
+            print("[Maple] Loading current states...")
             try await loadCurrentStates()
+            print("[Maple] Subscribing to state changes...")
             try await subscribeToStateChanges()
+            print("[Maple] All data loaded, \(entities.count) entities, \(areas.count) areas")
+        } catch let error as ConnectionError where error == .authFailed {
+            print("[Maple] Auth invalid — signing out")
+            AuthManager.shared.signOut()
+            connectionState = .disconnected
         } catch {
+            print("[Maple] Connection failed: \(error)")
             connectionState = .error(.unreachable)
             // Start reconnection
             Task { await reconnect() }
@@ -156,13 +141,12 @@ final class DashboardViewModel {
     // MARK: - Collapse
 
     func setCollapsed(_ collapsed: Bool, for sectionId: String) {
-        var ids = collapsedAreaIds
         if collapsed {
-            ids.insert(sectionId)
+            collapsedAreaIds.insert(sectionId)
         } else {
-            ids.remove(sectionId)
+            collapsedAreaIds.remove(sectionId)
         }
-        collapsedAreaIds = ids
+        UserDefaults.standard.set(Array(collapsedAreaIds), forKey: "collapsedAreas")
     }
 
     // MARK: - Data Loading
@@ -207,14 +191,30 @@ final class DashboardViewModel {
         // Use homeassistant/expose_entity/list to get exposed entities
         let response = try await client.getExposedEntityList()
 
-        guard let result = response.result else { return }
+        guard let result = response.result else {
+            print("[Maple] loadExposedEntities — no result in response, success=\(response.success ?? false)")
+            // If the command isn't supported, fall back to showing all entities
+            exposedEntityIds = Set(entities.keys)
+            for entityId in entities.keys {
+                entities[entityId]?.isExposed = true
+            }
+            await client.setExposedEntityIds(exposedEntityIds)
+            return
+        }
 
         var exposed = Set<String>()
 
         // The response contains exposed_entities keyed by entity_id
         if let dict = result.value as? [String: Any] {
+            print("[Maple] loadExposedEntities — got dict with \(dict.count) keys: \(Array(dict.keys).prefix(5))")
+
             // Try parsing as a dict of entity_id -> assistant exposure info
             if let exposedEntities = dict["exposed_entities"] as? [String: Any] {
+                print("[Maple] Found exposed_entities key with \(exposedEntities.count) entries")
+                // Log a sample entry
+                if let sample = exposedEntities.first {
+                    print("[Maple] Sample entry: \(sample.key) -> \(sample.value)")
+                }
                 for (entityId, info) in exposedEntities {
                     if let infoDict = info as? [String: Any] {
                         // Check any assistant has should_expose = true
@@ -229,6 +229,11 @@ final class DashboardViewModel {
                     }
                 }
             } else {
+                print("[Maple] No exposed_entities key, trying flat dict parse")
+                // Log first entry for debugging
+                if let sample = dict.first {
+                    print("[Maple] Sample key: \(sample.key) -> \(type(of: sample.value)): \(sample.value)")
+                }
                 // Fallback: try as flat dict
                 for (entityId, value) in dict {
                     if let valueDict = value as? [String: Any] {
@@ -243,11 +248,21 @@ final class DashboardViewModel {
                     }
                 }
             }
+        } else {
+            print("[Maple] loadExposedEntities — result is not a dict, type: \(type(of: result.value))")
+            if let arr = result.value as? [Any] {
+                print("[Maple] Result is array with \(arr.count) items")
+                if let sample = arr.first {
+                    print("[Maple] Sample: \(sample)")
+                }
+            }
         }
+
+        print("[Maple] Exposed entities from expose_entity/list: \(exposed.count)")
 
         // If the expose_entity/list didn't give results, fall back to entity registry
         if exposed.isEmpty {
-            // Fall back to checking entity registry options
+            print("[Maple] Falling back to entity registry options...")
             let registryResponse = try await client.sendCommand(type: "config/entity_registry/list")
             if let entries = registryResponse.result?.value as? [[String: Any]] {
                 for entry in entries {
@@ -260,13 +275,16 @@ final class DashboardViewModel {
                     }
                 }
             }
+            print("[Maple] Exposed entities from registry fallback: \(exposed.count)")
         }
 
         // If still empty, show all non-disabled entities
         if exposed.isEmpty {
+            print("[Maple] No exposed entities found via any method — showing all \(entities.count) entities")
             exposed = Set(entities.keys)
         }
 
+        print("[Maple] Final exposed entity count: \(exposed.count)")
         exposedEntityIds = exposed
         await client.setExposedEntityIds(exposed)
 
@@ -405,6 +423,18 @@ final class DashboardViewModel {
                 domain: "light",
                 service: "turn_on",
                 serviceData: ["entity_id": entity.id, "brightness": clamped]
+            )
+        } catch {
+            showError(.commandFailed(entity: entity.name))
+        }
+    }
+
+    func setColorTemp(_ entity: HAEntity, kelvin: Int) async {
+        do {
+            try await client.callService(
+                domain: "light",
+                service: "turn_on",
+                serviceData: ["entity_id": entity.id, "color_temp_kelvin": kelvin]
             )
         } catch {
             showError(.commandFailed(entity: entity.name))

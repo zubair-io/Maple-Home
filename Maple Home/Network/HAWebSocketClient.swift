@@ -1,4 +1,7 @@
 import Foundation
+import os
+
+private let logger = Logger(subsystem: "com.maple.home", category: "WebSocket")
 
 // MARK: - HAWebSocketClient
 
@@ -14,7 +17,9 @@ actor HAWebSocketClient {
     private var isReceiving = false
 
     init() {
-        self.session = URLSession(configuration: .default)
+        let config = URLSessionConfiguration.default
+        config.waitsForConnectivity = true
+        self.session = URLSession(configuration: config)
     }
 
     // MARK: - Public API
@@ -26,37 +31,52 @@ actor HAWebSocketClient {
 
         let wsScheme = url.scheme == "https" ? "wss" : "ws"
         guard let wsURL = URL(string: "\(wsScheme)://\(url.host ?? "localhost"):\(url.port ?? (url.scheme == "https" ? 443 : 8123))/api/websocket") else {
+            logger.error("Failed to construct WebSocket URL from: \(url.absoluteString)")
             throw ConnectionError.unreachable
         }
 
+        logger.info("Connecting to WebSocket: \(wsURL.absoluteString)")
+
         let task = session.webSocketTask(with: wsURL)
+        task.maximumMessageSize = 16 * 1024 * 1024  // 16 MB — HA entity lists can be large
         self.webSocketTask = task
         task.resume()
 
+        logger.info("WebSocket task resumed, waiting for auth_required...")
+
         // Wait for auth_required
         let authRequired = try await receiveMessage()
+        logger.info("Received message type: \(authRequired.type ?? "nil")")
         guard authRequired.type == "auth_required" else {
+            logger.error("Expected auth_required, got: \(authRequired.type ?? "nil")")
             throw ConnectionError.authFailed
         }
 
         // Send auth
+        logger.info("Sending auth token...")
         let authMsg = HAAuthMessage(accessToken: token)
         try await sendRaw(authMsg)
 
         // Wait for auth_ok
         let authResult = try await receiveMessage()
+        logger.info("Auth result: \(authResult.type ?? "nil")")
         guard authResult.type == "auth_ok" else {
+            logger.error("Auth failed, got: \(authResult.type ?? "nil")")
             throw ConnectionError.authFailed
         }
+
+        let version = authResult.haVersion ?? "unknown"
+        logger.info("Connected to HA version: \(version)")
 
         // Start receive loop
         isReceiving = true
         Task { await receiveLoop() }
 
-        return authResult.haVersion ?? "unknown"
+        return version
     }
 
     func disconnect() {
+        logger.info("Disconnecting WebSocket")
         webSocketTask?.cancel(with: .goingAway, reason: nil)
         webSocketTask = nil
         isReceiving = false
@@ -80,6 +100,7 @@ actor HAWebSocketClient {
     func sendCommand(type: String) async throws -> HAIncomingMessage {
         let id = nextMessageId()
         let msg = HACommandMessage(id: id, type: type)
+        logger.debug("Sending command [\(id)]: \(type)")
         return try await sendAndWait(id: id, message: msg)
     }
 
@@ -87,6 +108,7 @@ actor HAWebSocketClient {
     func subscribeStateChanges() async throws {
         let id = nextMessageId()
         let msg = HASubscribeEventsMessage(id: id, eventType: "state_changed")
+        logger.info("Subscribing to state_changed events [\(id)]")
         let _ = try await sendAndWait(id: id, message: msg)
     }
 
@@ -95,12 +117,18 @@ actor HAWebSocketClient {
         let id = nextMessageId()
         let codableData = serviceData.mapValues { AnyCodable($0) }
         let msg = HACallServiceMessage(id: id, domain: domain, service: service, serviceData: codableData)
+        logger.debug("Calling service [\(id)]: \(domain).\(service)")
         let _ = try await sendAndWait(id: id, message: msg)
     }
 
     /// Get exposed entity list using homeassistant/expose_entity/list
     func getExposedEntityList() async throws -> HAIncomingMessage {
-        return try await sendCommand(type: "homeassistant/expose_entity/list")
+        let id = nextMessageId()
+        let msg = HACommandMessage(id: id, type: "homeassistant/expose_entity/list")
+        logger.info("Sending expose_entity/list [\(id)]")
+
+        // Use sendAndWait but also log raw response via the receive loop
+        return try await sendAndWait(id: id, message: msg)
     }
 
     // MARK: - State Change Stream
@@ -142,6 +170,7 @@ actor HAWebSocketClient {
 
     private func receiveMessage() async throws -> HAIncomingMessage {
         guard let task = webSocketTask else {
+            logger.error("receiveMessage called but no webSocketTask")
             throw ConnectionError.unreachable
         }
         let message = try await task.receive()
@@ -158,6 +187,7 @@ actor HAWebSocketClient {
 
     private func receiveLoop() async {
         guard let task = webSocketTask else { return }
+        logger.info("Receive loop started")
 
         while isReceiving {
             do {
@@ -174,6 +204,20 @@ actor HAWebSocketClient {
 
                 // Handle response to pending request
                 if let id = incoming.id, let continuation = pendingRequests.removeValue(forKey: id) {
+                    logger.debug("Response for request [\(id)]: \(incoming.type ?? "nil"), success=\(incoming.success ?? false)")
+
+                    // Log raw JSON for debugging result payloads
+                    if incoming.type == "result" {
+                        switch message {
+                        case .string(let rawText):
+                            // Truncate to avoid flooding logs
+                            let preview = rawText.prefix(1000)
+                            print("[Maple] Raw result [\(id)]: \(preview)\(rawText.count > 1000 ? "... (\(rawText.count) bytes)" : "")")
+                        default:
+                            break
+                        }
+                    }
+
                     continuation.resume(returning: incoming)
                 }
 
@@ -195,6 +239,7 @@ actor HAWebSocketClient {
                     }
                 }
             } catch {
+                logger.error("Receive loop error: \(error.localizedDescription)")
                 if isReceiving {
                     // Connection lost
                     isReceiving = false
@@ -208,5 +253,6 @@ actor HAWebSocketClient {
                 break
             }
         }
+        logger.info("Receive loop ended")
     }
 }

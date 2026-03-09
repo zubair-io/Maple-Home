@@ -4,7 +4,7 @@ import Security
 // MARK: - KeychainStore
 
 enum KeychainStore {
-    private static let serviceName = "com.maple.casita"
+    private static let serviceName = "com.maple.home"
 
     static func save(_ value: String, for key: String) throws {
         guard let data = value.data(using: .utf8) else { return }
@@ -72,10 +72,10 @@ enum KeychainStore {
     // MARK: - Keys
 
     enum Keys {
-        static let serverURL = "casita.server_url"
-        static let accessToken = "casita.access_token"
-        static let refreshToken = "casita.refresh_token"
-        static let tokenExpiry = "casita.token_expiry"
+        static let serverURL = "maple.server_url"
+        static let accessToken = "maple.access_token"
+        static let refreshToken = "maple.refresh_token"
+        static let tokenExpiry = "maple.token_expiry"
     }
 }
 

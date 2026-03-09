@@ -21,13 +21,16 @@ struct AreaSectionView: View {
         #endif
     }
 
-    private var fullWidthColumns: [GridItem] {
-        [GridItem(.flexible())]
-    }
-
-    /// Whether an entity should span full width (climate, media_player).
-    private func isFullWidth(_ entity: HAEntity) -> Bool {
-        entity.domain == .climate || entity.domain == .mediaPlayer
+    private var wideColumns: [GridItem] {
+        #if os(macOS)
+        return Array(repeating: GridItem(.flexible(), spacing: Spacing.sp3), count: 2)
+        #else
+        if UIDevice.current.userInterfaceIdiom == .pad {
+            return Array(repeating: GridItem(.flexible(), spacing: Spacing.sp3), count: 2)
+        } else {
+            return [GridItem(.flexible())]
+        }
+        #endif
     }
 
     // MARK: - Body
@@ -35,23 +38,27 @@ struct AreaSectionView: View {
     var body: some View {
         Section {
             if !section.isCollapsed {
-                let standardEntities = section.entities.filter { !isFullWidth($0) }
-                let wideEntities = section.entities.filter { isFullWidth($0) }
+                // Section gradient rail
+                sectionRail
 
-                // Standard 2/3/4-column grid
-                if !standardEntities.isEmpty {
+                let halfEntities = section.entities.filter { !$0.domain.controlStyle.isFullWidth }
+                let fullEntities = section.entities.filter { $0.domain.controlStyle.isFullWidth }
+
+                // Standard-width grid (toggles, sensors, actions, selects, sliders, timers)
+                if !halfEntities.isEmpty {
                     LazyVGrid(columns: columns, spacing: Spacing.sp3) {
-                        ForEach(standardEntities) { entity in
+                        ForEach(halfEntities) { entity in
                             EntityCardView(entity: entity)
+                                .frame(height: CardSize.standard)
                         }
                     }
                     .padding(.horizontal, Spacing.sp4)
                 }
 
-                // Full-width cards for climate / media player
-                if !wideEntities.isEmpty {
-                    LazyVGrid(columns: fullWidthColumns, spacing: Spacing.sp3) {
-                        ForEach(wideEntities) { entity in
+                // Full-width cards (climate, media, cover, light)
+                if !fullEntities.isEmpty {
+                    LazyVGrid(columns: wideColumns, spacing: Spacing.sp3) {
+                        ForEach(fullEntities) { entity in
                             EntityCardView(entity: entity)
                         }
                     }
@@ -63,7 +70,7 @@ struct AreaSectionView: View {
         }
     }
 
-    // MARK: - Section Header
+    // MARK: - Section Header (numbered, styled like mockup)
 
     private var sectionHeader: some View {
         Button {
@@ -71,43 +78,65 @@ struct AreaSectionView: View {
                 vm.setCollapsed(!section.isCollapsed, for: section.id)
             }
         } label: {
-            HStack(spacing: Spacing.sp2) {
-                Text(section.areaName.uppercased())
-                    .font(.label)
-                    .tracking(1.2)
+            VStack(alignment: .leading, spacing: Spacing.sp3) {
+                HStack(alignment: .firstTextBaseline, spacing: Spacing.sp3) {
+                    // Section number
+                    Text(section.category.sectionNumber)
+                        .font(.merriweather(size: 11, weight: .bold))
+                        .tracking(0.6)
+                        .foregroundStyle(section.category.color)
+
+                    // Section title
+                    Text(section.category.title)
+                        .font(.merriweather(size: 24, weight: .black))
+                        .foregroundStyle(Color.textPrimary)
+
+                    Spacer()
+
+                    // Collapse chevron
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(Color.textFaint)
+                        .rotationEffect(.degrees(section.isCollapsed ? 0 : 90))
+                        .animation(.easeInOut(duration: 0.25), value: section.isCollapsed)
+                }
+
+                // Subtitle (entity types)
+                Text(section.category.subtitle)
+                    .font(.lato(size: 12, weight: .light))
                     .foregroundStyle(Color.textMuted)
 
-                Text("\(section.entityCount)")
-                    .font(.lato(size: 10, weight: .bold))
-                    .foregroundStyle(Color.textFaint)
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 2)
-                    .background(Color.border)
-                    .clipShape(RoundedRectangle(cornerRadius: Radius.pill))
-
-                Spacer()
-
-                Image(systemName: "chevron.right")
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(Color.textFaint)
-                    .rotationEffect(.degrees(section.isCollapsed ? 0 : 90))
-                    .animation(.easeInOut(duration: 0.25), value: section.isCollapsed)
+                // Bottom border
+                Divider()
             }
             .padding(.horizontal, Spacing.sp4)
-            .padding(.vertical, Spacing.sp3)
+            .padding(.top, Spacing.sp6)
+            .padding(.bottom, Spacing.sp2)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
     }
+
+    // MARK: - Gradient Rail
+
+    private var sectionRail: some View {
+        RoundedRectangle(cornerRadius: 1.5)
+            .fill(
+                LinearGradient(
+                    colors: [section.category.color, section.category.color.opacity(0.08)],
+                    startPoint: .leading,
+                    endPoint: .trailing
+                )
+            )
+            .frame(height: 3)
+            .padding(.horizontal, Spacing.sp4)
+            .padding(.bottom, Spacing.sp6)
+    }
 }
 
-#Preview {
-    let section = DashboardSection(
-        id: "living_room",
-        areaName: "Living Room",
-        entities: [],
-        isCollapsed: false
-    )
-    AreaSectionView(section: section)
-        .background(Color.base)
+// MARK: - Card Size Constants
+
+enum CardSize {
+    /// Standard height for half-width cards
+    static let standard: CGFloat = 160
 }

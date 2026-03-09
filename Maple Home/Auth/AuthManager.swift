@@ -1,5 +1,4 @@
 import Foundation
-import AuthenticationServices
 
 // MARK: - AuthManager
 
@@ -11,8 +10,8 @@ final class AuthManager {
     private(set) var token: String?
     private(set) var refreshTokenValue: String?
 
-    static let clientId = "https://casita.maple.app"
-    static let callbackScheme = "casita"
+    /// The callback path HA redirects to after login
+    static let callbackPath = "/auth/external/callback"
 
     private init() {
         // Load saved credentials
@@ -28,58 +27,29 @@ final class AuthManager {
         token != nil && serverURL != nil
     }
 
-    // MARK: - Authentication Flow
+    // MARK: - OAuth Helpers
 
-    /// Full authentication flow: validate URL, OAuth2, token exchange
-    func authenticate(serverURL: URL) async throws {
-        // 1. Validate the URL
-        let restClient = HARestClient(serverURL: serverURL)
-        let _ = try await restClient.validateInstance()
+    /// Build the OAuth authorize URL for a given server
+    func oauthURL(for serverURL: URL) -> URL? {
+        let clientId = serverURL.absoluteString
+        let redirectURI = serverURL.absoluteString + Self.callbackPath
 
-        // 2. Build OAuth2 URL
-        let authURL = serverURL.appendingPathComponent("auth/authorize")
-        var components = URLComponents(url: authURL, resolvingAgainstBaseURL: false)!
-        components.queryItems = [
-            URLQueryItem(name: "client_id", value: Self.clientId),
-            URLQueryItem(name: "redirect_uri", value: "\(Self.callbackScheme)://auth-callback")
+        var components = URLComponents(string: serverURL.absoluteString + "/auth/authorize")
+        components?.queryItems = [
+            URLQueryItem(name: "response_type", value: "code"),
+            URLQueryItem(name: "client_id", value: clientId),
+            URLQueryItem(name: "redirect_uri", value: redirectURI)
         ]
+        return components?.url
+    }
 
-        guard let oauthURL = components.url else {
-            throw AuthError.invalidURL
-        }
+    /// Exchange the auth code for tokens after OAuth callback
+    func exchangeCode(_ code: String, serverURL: URL) async throws {
+        let clientId = serverURL.absoluteString
+        let restClient = HARestClient(serverURL: serverURL)
+        let tokenResponse = try await restClient.exchangeAuthCode(code, clientId: clientId)
 
-        // 3. Present ASWebAuthenticationSession
-        let callbackURL = try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<URL, Error>) in
-            let session = ASWebAuthenticationSession(
-                url: oauthURL,
-                callbackURLScheme: Self.callbackScheme
-            ) { callbackURL, error in
-                if let error {
-                    continuation.resume(throwing: error)
-                } else if let callbackURL {
-                    continuation.resume(returning: callbackURL)
-                } else {
-                    continuation.resume(throwing: AuthError.authCancelled)
-                }
-            }
-            session.prefersEphemeralWebBrowserSession = false
-
-            // Run on main thread for presentation
-            DispatchQueue.main.async {
-                session.start()
-            }
-        }
-
-        // 4. Extract auth code from callback
-        guard let components = URLComponents(url: callbackURL, resolvingAgainstBaseURL: false),
-              let code = components.queryItems?.first(where: { $0.name == "code" })?.value else {
-            throw AuthError.tokenExchangeFailed
-        }
-
-        // 5. Exchange code for token
-        let tokenResponse = try await restClient.exchangeAuthCode(code, clientId: Self.clientId)
-
-        // 6. Store credentials
+        // Store credentials
         self.serverURL = serverURL
         self.token = tokenResponse.accessToken
         self.refreshTokenValue = tokenResponse.refreshToken
@@ -93,11 +63,13 @@ final class AuthManager {
 
     /// Save a long-lived access token directly (for manual token entry)
     func saveToken(_ token: String, serverURL: URL) throws {
+        print("[Maple] saveToken — serverURL: \(serverURL.absoluteString), token: \(token.prefix(8))...")
         self.serverURL = serverURL
         self.token = token
 
         try KeychainStore.save(serverURL.absoluteString, for: KeychainStore.Keys.serverURL)
         try KeychainStore.save(token, for: KeychainStore.Keys.accessToken)
+        print("[Maple] Token saved to keychain successfully")
     }
 
     /// Attempt a silent token refresh
@@ -107,8 +79,9 @@ final class AuthManager {
             throw AuthError.tokenExchangeFailed
         }
 
+        let clientId = serverURL.absoluteString
         let restClient = HARestClient(serverURL: serverURL)
-        let tokenResponse = try await restClient.refreshToken(refresh, clientId: Self.clientId)
+        let tokenResponse = try await restClient.refreshToken(refresh, clientId: clientId)
 
         self.token = tokenResponse.accessToken
         if let newRefresh = tokenResponse.refreshToken {

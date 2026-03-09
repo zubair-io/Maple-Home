@@ -2,11 +2,13 @@ import SwiftUI
 
 struct LoginView: View {
     @Environment(DashboardViewModel.self) private var vm
-    @State private var serverURLText = ""
+    @State private var serverURLText = "http://homeassistant.local:8123"
     @State private var tokenText = ""
     @State private var isConnecting = false
     @State private var errorMessage: String?
     @State private var showTokenInput = false
+    @State private var showOAuthSheet = false
+    @State private var oauthServerURL: URL?
 
     var body: some View {
         VStack(spacing: Spacing.sp7) {
@@ -14,10 +16,15 @@ struct LoginView: View {
 
             // Wordmark
             VStack(spacing: Spacing.sp2) {
-                Text("Casita")
-                    .font(.merriweather(size: 48, weight: .black))
-                    .foregroundStyle(Color.textPrimary)
-                Text("Your home, clearly.")
+                HStack(spacing: 0) {
+                    Text("Maple")
+                        .font(.merriweather(size: 48, weight: .black))
+                        .foregroundStyle(Color.textPrimary)
+                    Text(".")
+                        .font(.merriweather(size: 48, weight: .black))
+                        .foregroundStyle(Color.accent)
+                }
+                Text("Your home, beautifully.")
                     .font(.merriweather(size: 20, weight: .light, italic: true))
                     .foregroundStyle(Color.textMuted)
             }
@@ -112,7 +119,35 @@ struct LoginView: View {
         }
         .padding(Spacing.sp7)
         .background(Color.base.ignoresSafeArea())
+        .onAppear {
+            isConnecting = false
+            errorMessage = nil
+        }
+        .sheet(isPresented: $showOAuthSheet) {
+            if let serverURL = oauthServerURL,
+               let authURL = AuthManager.shared.oauthURL(for: serverURL) {
+                OAuthLoginSheet(
+                    authURL: authURL,
+                    serverURL: serverURL,
+                    onComplete: { code in
+                        showOAuthSheet = false
+                        Task { await finishOAuth(code: code, serverURL: serverURL) }
+                    },
+                    onCancel: {
+                        showOAuthSheet = false
+                        isConnecting = false
+                    },
+                    onError: { error in
+                        showOAuthSheet = false
+                        errorMessage = "Authentication failed: \(error.localizedDescription)"
+                        isConnecting = false
+                    }
+                )
+            }
+        }
     }
+
+    // MARK: - Actions
 
     private func connect() async {
         let trimmed = serverURLText.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -124,24 +159,84 @@ struct LoginView: View {
         isConnecting = true
         errorMessage = nil
 
-        do {
-            if showTokenInput && !tokenText.isEmpty {
-                // Direct token auth
-                try AuthManager.shared.saveToken(tokenText.trimmingCharacters(in: .whitespacesAndNewlines), serverURL: url)
+        if showTokenInput && !tokenText.isEmpty {
+            // Direct token auth — validate connection before saving
+            do {
+                let trimmedToken = tokenText.trimmingCharacters(in: .whitespacesAndNewlines)
+                try AuthManager.shared.saveToken(trimmedToken, serverURL: url)
+                // Try connecting — this will throw authFailed if the token is invalid
                 await vm.connect()
-            } else {
-                // OAuth flow
-                try await AuthManager.shared.authenticate(serverURL: url)
-                await vm.connect()
+                if case .disconnected = vm.connectionState {
+                    // Auth was invalid, signOut already called
+                    errorMessage = "Invalid token. Check your long-lived access token and try again."
+                } else if case .error = vm.connectionState {
+                    AuthManager.shared.signOut()
+                    errorMessage = "Couldn't connect. Check the URL and token."
+                }
+            } catch {
+                AuthManager.shared.signOut()
+                errorMessage = "Connection failed: \(error.localizedDescription)"
             }
-        } catch AuthError.unreachable {
-            errorMessage = "Couldn't reach that address. Check the URL and try again."
-        } catch AuthError.notHAInstance {
-            errorMessage = "That URL doesn't look like a Home Assistant instance."
-        } catch {
-            errorMessage = "Authentication failed. Please try again."
+            isConnecting = false
+        } else {
+            // Validate, then show OAuth webview
+            do {
+                let restClient = HARestClient(serverURL: url)
+                _ = try await restClient.validateInstance()
+                oauthServerURL = url
+                showOAuthSheet = true
+            } catch AuthError.unreachable {
+                errorMessage = "Couldn't reach that address. Check the URL and try again."
+                isConnecting = false
+            } catch AuthError.notHAInstance {
+                errorMessage = "That URL doesn't look like a Home Assistant instance."
+                isConnecting = false
+            } catch {
+                errorMessage = "Connection failed: \(error.localizedDescription)"
+                isConnecting = false
+            }
         }
+    }
 
+    private func finishOAuth(code: String, serverURL: URL) async {
+        do {
+            try await AuthManager.shared.exchangeCode(code, serverURL: serverURL)
+            await vm.connect()
+        } catch {
+            errorMessage = "Token exchange failed: \(error.localizedDescription)"
+        }
         isConnecting = false
+    }
+}
+
+// MARK: - OAuth Login Sheet
+
+private struct OAuthLoginSheet: View {
+    let authURL: URL
+    let serverURL: URL
+    let onComplete: (String) -> Void
+    let onCancel: () -> Void
+    let onError: (Error) -> Void
+
+    var body: some View {
+        NavigationStack {
+            OAuthWebView(
+                url: authURL,
+                serverURL: serverURL,
+                onAuthCode: onComplete,
+                onError: onError
+            )
+            .ignoresSafeArea(edges: .bottom)
+            .navigationTitle("Sign In")
+            #if os(iOS)
+            .navigationBarTitleDisplayMode(.inline)
+            #endif
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { onCancel() }
+                        .font(.lato(size: 14, weight: .bold))
+                }
+            }
+        }
     }
 }

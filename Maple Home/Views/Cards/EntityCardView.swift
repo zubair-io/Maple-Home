@@ -9,6 +9,15 @@ struct EntityCardView: View {
 
     var body: some View {
         cardContent
+            .overlay(alignment: .leading) {
+                // Category accent rail on left edge
+                UnevenRoundedRectangle(
+                    topLeadingRadius: Radius.lg,
+                    bottomLeadingRadius: Radius.lg
+                )
+                .fill(entity.domain.category.color)
+                .frame(width: 3)
+            }
             .opacity(entity.isAvailable ? 1.0 : 0.45)
             .onLongPressGesture(minimumDuration: 0.4) {
                 showDetailSheet = true
@@ -23,6 +32,8 @@ struct EntityCardView: View {
         switch entity.domain.controlStyle {
         case .toggle:
             ToggleCardView(entity: entity)
+        case .light:
+            LightCardView(entity: entity)
         case .slider:
             SliderCardView(entity: entity)
         case .climate:
@@ -43,39 +54,6 @@ struct EntityCardView: View {
     }
 }
 
-// MARK: - Entity Detail Sheet (Placeholder)
-
-struct EntityDetailSheet: View {
-    let entity: HAEntity
-    @Environment(\.dismiss) private var dismiss
-
-    var body: some View {
-        NavigationStack {
-            List {
-                Section("Entity") {
-                    LabeledContent("ID", value: entity.id)
-                    LabeledContent("State", value: entity.state)
-                    LabeledContent("Domain", value: entity.domain.rawValue)
-                }
-
-                Section("Attributes") {
-                    ForEach(entity.attributes.rawKeyValues, id: \.key) { pair in
-                        LabeledContent(pair.key, value: pair.value)
-                            .font(.bodySM)
-                    }
-                }
-            }
-            .navigationTitle(entity.name)
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button("Done") { dismiss() }
-                        .font(.lato(size: 14, weight: .bold))
-                }
-            }
-        }
-    }
-}
 
 #Preview {
     EntityCardView(entity: HAEntity(
