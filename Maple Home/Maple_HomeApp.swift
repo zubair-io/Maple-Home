@@ -1,0 +1,32 @@
+//
+//  Maple_HomeApp.swift
+//  Maple Home
+//
+//  Created by Zubair Lawrence on 3/9/26.
+//
+
+import SwiftUI
+import SwiftData
+
+@main
+struct Maple_HomeApp: App {
+    var sharedModelContainer: ModelContainer = {
+        let schema = Schema([
+            Item.self,
+        ])
+        let modelConfiguration = ModelConfiguration(schema: schema, isStoredInMemoryOnly: false)
+
+        do {
+            return try ModelContainer(for: schema, configurations: [modelConfiguration])
+        } catch {
+            fatalError("Could not create ModelContainer: \(error)")
+        }
+    }()
+
+    var body: some Scene {
+        WindowGroup {
+            ContentView()
+        }
+        .modelContainer(sharedModelContainer)
+    }
+}
