@@ -172,3 +172,25 @@ struct HAInstanceInfo {
     let version: String
     let baseURL: URL
 }
+
+// MARK: - Remote Access Info
+
+struct HARemoteAccess: Equatable {
+    let externalURL: URL?
+    let internalURL: URL?
+    let cloudURL: URL?
+    let cloudConnected: Bool
+    let externalReachable: Bool
+    let cloudReachable: Bool
+
+    var bestRemoteURL: URL? {
+        if let cloud = cloudURL, cloudConnected, cloudReachable { return cloud }
+        if let external = externalURL, externalReachable { return external }
+        return nil
+    }
+
+    static let empty = HARemoteAccess(
+        externalURL: nil, internalURL: nil, cloudURL: nil,
+        cloudConnected: false, externalReachable: false, cloudReachable: false
+    )
+}
