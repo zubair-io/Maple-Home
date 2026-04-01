@@ -20,8 +20,10 @@
 		<key>NSAllowsArbitraryLoads</key>
 		<true/>
 	</dict>
+	<key>ITSAppUsesNonExemptEncryption</key>
+	<false/>
 	<key>NSLocalNetworkUsageDescription</key>
-	<string>Casita needs local network access to connect to your Home Assistant instance.</string>
+	<string>Maple Home needs local network access to connect to your Home Assistant instance.</string>
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>remote-notification</string>

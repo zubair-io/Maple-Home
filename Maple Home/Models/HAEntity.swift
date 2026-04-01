@@ -2,14 +2,18 @@ import Foundation
 
 // MARK: - HAEntity
 
-struct HAEntity: Identifiable, Equatable {
+struct HAEntity: Identifiable, Equatable, Codable {
     let id: String          // entity_id e.g. "light.desk_lamp"
-    let name: String        // friendly name
+    var name: String        // friendly name
     let domain: DomainType  // parsed from entity_id prefix
-    let areaId: String?     // nil if not assigned to an area
+    var areaId: String?     // nil if not assigned to an area
     var state: String       // raw state string: "on", "off", "22.5", etc.
     var attributes: HAAttributes
     var isExposed: Bool     // from entity registry / expose list
+
+    enum CodingKeys: String, CodingKey {
+        case id, name, domain, areaId, state, attributes, isExposed
+    }
 
     var isAvailable: Bool {
         state != "unavailable" && state != "unknown"
@@ -30,7 +34,7 @@ struct HAEntity: Identifiable, Equatable {
 
 // MARK: - HAAttributes
 
-struct HAAttributes: Equatable {
+struct HAAttributes: Equatable, Codable {
     let raw: [String: AnyCodable]
 
     init(raw: [String: AnyCodable] = [:]) {

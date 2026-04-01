@@ -11,6 +11,7 @@ actor HAWebSocketClient {
     private var messageIdCounter: Int = 0
     private var pendingRequests: [Int: CheckedContinuation<HAIncomingMessage, Error>] = [:]
     private var stateChangeContinuation: AsyncStream<StateChangedEvent>.Continuation?
+    private var registryEventContinuation: AsyncStream<String>.Continuation?
     private var exposedEntityIds: Set<String> = []
     private var serverURL: URL?
     private var token: String?
@@ -82,6 +83,8 @@ actor HAWebSocketClient {
         isReceiving = false
         stateChangeContinuation?.finish()
         stateChangeContinuation = nil
+        registryEventContinuation?.finish()
+        registryEventContinuation = nil
 
         // Cancel all pending requests
         for (_, continuation) in pendingRequests {
@@ -131,11 +134,30 @@ actor HAWebSocketClient {
         return try await sendAndWait(id: id, message: msg)
     }
 
+    /// Subscribe to registry update events
+    func subscribeRegistryEvents() async throws {
+        let eventTypes = ["entity_registry_updated", "area_registry_updated", "device_registry_updated"]
+        for eventType in eventTypes {
+            let id = nextMessageId()
+            let msg = HASubscribeEventsMessage(id: id, eventType: eventType)
+            logger.info("Subscribing to \(eventType) events [\(id)]")
+            let _ = try await sendAndWait(id: id, message: msg)
+        }
+    }
+
     // MARK: - State Change Stream
 
     var stateChanges: AsyncStream<StateChangedEvent> {
         AsyncStream { continuation in
             self.stateChangeContinuation = continuation
+        }
+    }
+
+    // MARK: - Registry Event Stream
+
+    var registryEvents: AsyncStream<String> {
+        AsyncStream { continuation in
+            self.registryEventContinuation = continuation
         }
     }
 
@@ -238,12 +260,22 @@ actor HAWebSocketClient {
                         stateChangeContinuation?.yield(stateEvent)
                     }
                 }
+
+                // Handle registry update events
+                if incoming.type == "event",
+                   let event = incoming.event,
+                   let eventType = event.eventType,
+                   ["entity_registry_updated", "area_registry_updated", "device_registry_updated"].contains(eventType) {
+                    logger.info("Registry event received: \(eventType)")
+                    registryEventContinuation?.yield(eventType)
+                }
             } catch {
                 logger.error("Receive loop error: \(error.localizedDescription)")
                 if isReceiving {
                     // Connection lost
                     isReceiving = false
                     stateChangeContinuation?.finish()
+                    registryEventContinuation?.finish()
                     // Cancel pending requests
                     for (_, continuation) in pendingRequests {
                         continuation.resume(throwing: ConnectionError.unreachable)

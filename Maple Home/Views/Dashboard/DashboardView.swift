@@ -18,11 +18,8 @@ struct DashboardView: View {
                             .transition(.move(edge: .top).combined(with: .opacity))
                     }
 
-                    // Header
-                    DashboardHeaderView(activeCount: vm.activeCount)
-
                     // Content
-                    if vm.sections.isEmpty && vm.connectionState.isConnected {
+                    if vm.sections.isEmpty && vm.dataSource == .live {
                         EmptyExposedEntitiesView()
                             .padding(.top, Spacing.sp8)
                     } else {

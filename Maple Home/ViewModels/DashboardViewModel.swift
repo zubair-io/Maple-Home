@@ -1,6 +1,14 @@
 import SwiftUI
 import Foundation
 
+// MARK: - Data Source
+
+enum DataSource: Equatable {
+    case none
+    case cached
+    case live
+}
+
 // MARK: - Command Error
 
 enum CommandError: Equatable {
@@ -24,9 +32,11 @@ final class DashboardViewModel {
     // Connection
     var connectionState: ConnectionState = .disconnected
     var haVersion: String = ""
+    var dataSource: DataSource = .none
 
     // Data
     var areas: [HAArea] = []
+    var floors: [HAFloor] = []
     var entities: [String: HAEntity] = [:]  // keyed by entity_id
     var exposedEntityIds: Set<String> = []
 
@@ -37,16 +47,18 @@ final class DashboardViewModel {
     // Collapse state — tracked by @Observable so sections recompute
     var collapsedAreaIds: Set<String> = Set(UserDefaults.standard.stringArray(forKey: "collapsedAreas") ?? [])
 
+    // Cache
+    private let cache = StateCache()
+    private var registryEventTask: Task<Void, Never>?
+
     // MARK: - Derived
 
     var sections: [DashboardSection] {
-        let exposed = entities.values.filter { $0.isExposed }
-
-        // Group by area (room-based layout)
+        // Group all entities by area
         var areaGroups: [String: [HAEntity]] = [:]
         var noArea: [HAEntity] = []
 
-        for entity in exposed {
+        for entity in entities.values {
             if let areaId = entity.areaId {
                 areaGroups[areaId, default: []].append(entity)
             } else {
@@ -102,6 +114,16 @@ final class DashboardViewModel {
             return
         }
 
+        // Load cache first for instant display
+        if dataSource == .none, let cached = await cache.load() {
+            entities = cached.entities
+            areas = cached.areas
+            floors = cached.floors
+            exposedEntityIds = Set(cached.exposedEntityIds)
+            dataSource = .cached
+            print("[Maple] Loaded \(cached.entities.count) entities from cache (age: \(Int(-cached.cachedAt.timeIntervalSinceNow))s)")
+        }
+
         guard let serverURL = AuthManager.shared.serverURL,
               let token = AuthManager.shared.token else {
             print("[Maple] connect() — no serverURL or token found")
@@ -125,12 +147,17 @@ final class DashboardViewModel {
             try await loadEntityRegistry()
             print("[Maple] Loading exposed entities...")
             try await loadExposedEntities()
+            print("[Maple] Loading floor registry...")
+            try await loadFloorRegistry()
             print("[Maple] Loading area registry...")
             try await loadAreaRegistry()
             print("[Maple] Loading current states...")
             try await loadCurrentStates()
+            dataSource = .live
             print("[Maple] Subscribing to state changes...")
             try await subscribeToStateChanges()
+            try await subscribeToRegistryEvents()
+            scheduleCacheSave()
             print("[Maple] All data loaded, \(entities.count) entities, \(areas.count) areas")
         } catch let error as ConnectionError where error == .authFailed {
             print("[Maple] Auth invalid — signing out")
@@ -145,6 +172,8 @@ final class DashboardViewModel {
     }
 
     func disconnect() {
+        registryEventTask?.cancel()
+        registryEventTask = nil
         Task { await client.disconnect() }
         connectionState = .disconnected
     }
@@ -156,6 +185,10 @@ final class DashboardViewModel {
         }
 
         do {
+            try await loadEntityRegistry()
+            try await loadExposedEntities()
+            try await loadFloorRegistry()
+            try await loadAreaRegistry()
             try await loadCurrentStates()
         } catch {
             // Reconnect if reload fails
@@ -182,23 +215,50 @@ final class DashboardViewModel {
         guard let result = response.result,
               let entries = result.value as? [[String: Any]] else { return }
 
+        // Also load device registry to resolve area_id from devices
+        var deviceAreas: [String: String] = [:]
+        let deviceResponse = try await client.sendCommand(type: "config/device_registry/list")
+        if let deviceResult = deviceResponse.result,
+           let devices = deviceResult.value as? [[String: Any]] {
+            for device in devices {
+                if let deviceId = device["id"] as? String,
+                   let areaId = device["area_id"] as? String {
+                    deviceAreas[deviceId] = areaId
+                }
+            }
+        }
+
+        // Track which entity IDs are still valid
+        var validEntityIds = Set<String>()
+
         for entry in entries {
             guard let entityId = entry["entity_id"] as? String else { continue }
 
-            let name = entry["name"] as? String
-                ?? (entry["original_name"] as? String)
-                ?? entityId.components(separatedBy: ".").last?.replacingOccurrences(of: "_", with: " ").capitalized
-                ?? entityId
-            let areaId = entry["area_id"] as? String
             let disabledBy = entry["disabled_by"] as? String
             let hiddenBy = entry["hidden_by"] as? String
 
             // Skip disabled/hidden
             guard disabledBy == nil, hiddenBy == nil else { continue }
 
+            validEntityIds.insert(entityId)
+
+            let name = entry["name"] as? String
+                ?? (entry["original_name"] as? String)
+                ?? entityId.components(separatedBy: ".").last?.replacingOccurrences(of: "_", with: " ").capitalized
+                ?? entityId
+
+            // Area can come from entity directly, or from its parent device
+            let areaId = (entry["area_id"] as? String)
+                ?? (entry["device_id"] as? String).flatMap { deviceAreas[$0] }
+
             let domain = DomainType(entityId: entityId)
 
-            if entities[entityId] == nil {
+            if var existing = entities[entityId] {
+                // Update name and area for existing entities
+                existing.name = name
+                existing.areaId = areaId
+                entities[entityId] = existing
+            } else {
                 entities[entityId] = HAEntity(
                     id: entityId,
                     name: name,
@@ -206,9 +266,15 @@ final class DashboardViewModel {
                     areaId: areaId,
                     state: "unknown",
                     attributes: HAAttributes(),
-                    isExposed: false  // Will be updated by loadExposedEntities
+                    isExposed: false
                 )
             }
+        }
+
+        // Remove entities that no longer exist in the registry
+        let staleIds = Set(entities.keys).subtracting(validEntityIds)
+        for staleId in staleIds {
+            entities.removeValue(forKey: staleId)
         }
     }
 
@@ -327,6 +393,24 @@ final class DashboardViewModel {
         }
     }
 
+    private func loadFloorRegistry() async throws {
+        let response = try await client.sendCommand(type: "config/floor_registry/list")
+
+        guard let result = response.result,
+              let entries = result.value as? [[String: Any]] else {
+            print("[Maple] No floor registry available (older HA version?)")
+            return
+        }
+
+        floors = entries.compactMap { entry in
+            guard let floorId = entry["floor_id"] as? String,
+                  let name = entry["name"] as? String else { return nil }
+            let level = entry["level"] as? Int
+            return HAFloor(id: floorId, name: name, level: level)
+        }
+        print("[Maple] Loaded \(floors.count) floors: \(floors.map { "\($0.name)(\($0.level ?? 0))" })")
+    }
+
     private func loadAreaRegistry() async throws {
         let response = try await client.sendCommand(type: "config/area_registry/list")
 
@@ -336,8 +420,10 @@ final class DashboardViewModel {
         areas = entries.compactMap { entry in
             guard let areaId = entry["area_id"] as? String,
                   let name = entry["name"] as? String else { return nil }
-            return HAArea(id: areaId, name: name)
+            let floorId = entry["floor_id"] as? String
+            return HAArea(id: areaId, name: name, floorId: floorId)
         }
+        print("[Maple] Loaded \(areas.count) areas, \(areas.filter { $0.floorId != nil }.count) with floor assignments")
     }
 
     private func loadCurrentStates() async throws {
@@ -393,9 +479,64 @@ final class DashboardViewModel {
     }
 
     private func handleStateChange(_ event: StateChangedEvent) {
-        guard exposedEntityIds.contains(event.entityId) else { return }
-        entities[event.entityId]?.state = event.newState
-        entities[event.entityId]?.attributes = event.attributes
+        if let _ = entities[event.entityId] {
+            entities[event.entityId]?.state = event.newState
+            entities[event.entityId]?.attributes = event.attributes
+        } else if exposedEntityIds.contains(event.entityId) {
+            // New entity appeared — create it
+            let domain = DomainType(entityId: event.entityId)
+            let name = event.entityId.components(separatedBy: ".").last?
+                .replacingOccurrences(of: "_", with: " ").capitalized ?? event.entityId
+            entities[event.entityId] = HAEntity(
+                id: event.entityId,
+                name: name,
+                domain: domain,
+                areaId: nil,
+                state: event.newState,
+                attributes: event.attributes,
+                isExposed: true
+            )
+        }
+        scheduleCacheSave()
+    }
+
+    private func subscribeToRegistryEvents() async throws {
+        try await client.subscribeRegistryEvents()
+
+        registryEventTask?.cancel()
+        registryEventTask = Task {
+            for await eventType in await client.registryEvents {
+                do {
+                    switch eventType {
+                    case "entity_registry_updated":
+                        try await self.loadEntityRegistry()
+                        try await self.loadExposedEntities()
+                    case "area_registry_updated":
+                        try await self.loadAreaRegistry()
+                    case "device_registry_updated":
+                        try await self.loadEntityRegistry()
+                    default:
+                        break
+                    }
+                    self.scheduleCacheSave()
+                    print("[Maple] Registry reload complete after \(eventType)")
+                } catch {
+                    print("[Maple] Registry reload failed after \(eventType): \(error)")
+                }
+            }
+        }
+    }
+
+    // MARK: - Cache
+
+    private func scheduleCacheSave() {
+        let state = CachedState(entities: entities, areas: areas, floors: floors, exposedEntityIds: exposedEntityIds)
+        Task { await cache.scheduleSave(state) }
+    }
+
+    func saveCacheNow() {
+        let state = CachedState(entities: entities, areas: areas, floors: floors, exposedEntityIds: exposedEntityIds)
+        Task { await cache.saveImmediately(state) }
     }
 
     // MARK: - Reconnection

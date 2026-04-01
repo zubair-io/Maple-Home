@@ -6,7 +6,9 @@ struct LightCardView: View {
 
     @State private var brightnessValue: Double = 0
     @State private var colorTempValue: Double = 4000
-    @State private var debounceTask: Task<Void, Never>?
+    @State private var brightnessDebounce: Task<Void, Never>?
+    @State private var colorTempDebounce: Task<Void, Never>?
+    @State private var isSyncing = true
 
     private var isOn: Bool { entity.isOn }
     private var areaName: String? { vm.areaName(for: entity) }
@@ -16,7 +18,7 @@ struct LightCardView: View {
     }
 
     private var hasColorTemp: Bool {
-        entity.attributes.colorTempKelvin != nil
+        entity.attributes.supportedColorModes?.contains("color_temp") == true
     }
 
     var body: some View {
@@ -42,12 +44,18 @@ struct LightCardView: View {
                     label: "Brightness",
                     valueFormat: { "\(Int(round($0 / 255.0 * 100)))%" }
                 )
-                .onChange(of: brightnessValue) { _, _ in debounceBrightness() }
+                .onChange(of: brightnessValue) { _, _ in
+                    guard !isSyncing else { return }
+                    debounceBrightness()
+                }
                 .padding(.bottom, hasColorTemp ? MapleSpacing.s4 : 0)
 
                 if hasColorTemp {
                     ColorTempSlider(kelvin: $colorTempValue)
-                        .onChange(of: colorTempValue) { _, _ in debounceColorTemp() }
+                        .onChange(of: colorTempValue) { _, _ in
+                            guard !isSyncing else { return }
+                            debounceColorTemp()
+                        }
                 }
             } else {
                 MapleSlider(
@@ -58,6 +66,12 @@ struct LightCardView: View {
                 )
                 .opacity(0.35)
                 .disabled(true)
+
+                if hasColorTemp {
+                    ColorTempSlider(kelvin: .constant(colorTempValue))
+                        .opacity(0.35)
+                        .disabled(true)
+                }
             }
         }
         .animation(.spring(response: 0.3, dampingFraction: 0.8), value: isOn)
@@ -67,13 +81,18 @@ struct LightCardView: View {
     }
 
     private func syncValues() {
+        isSyncing = true
         brightnessValue = Double(entity.attributes.brightness ?? 0)
         colorTempValue = Double(entity.attributes.colorTempKelvin ?? 4000)
+        // Reset after the next run loop so onChange handlers see isSyncing == true
+        Task { @MainActor in
+            isSyncing = false
+        }
     }
 
     private func debounceBrightness() {
-        debounceTask?.cancel()
-        debounceTask = Task {
+        brightnessDebounce?.cancel()
+        brightnessDebounce = Task {
             try? await Task.sleep(nanoseconds: 300_000_000)
             guard !Task.isCancelled else { return }
             await vm.setBrightness(entity, brightness: Int(brightnessValue))
@@ -81,8 +100,8 @@ struct LightCardView: View {
     }
 
     private func debounceColorTemp() {
-        debounceTask?.cancel()
-        debounceTask = Task {
+        colorTempDebounce?.cancel()
+        colorTempDebounce = Task {
             try? await Task.sleep(nanoseconds: 300_000_000)
             guard !Task.isCancelled else { return }
             await vm.setColorTemp(entity, kelvin: Int(colorTempValue))

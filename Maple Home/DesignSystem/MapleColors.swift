@@ -32,6 +32,12 @@ extension Color {
     static let mapleInfo         = Color(hex: "#2874A6")
     static let mapleInfoDim      = Color(hex: "#2874A6").opacity(0.12)
 
+    // Temperature Hex Tile Colors
+    static let tempCold = Color(hex: "#5A90B0")
+    static let tempCool = Color(hex: "#6BAEC8")
+    static let tempNorm = Color.mapleSuccess
+    static let tempWarm = Color(hex: "#B07020")
+
     // Category (transit-map)
     static let catControl        = Color(hex: "#E8540A")
     static let catSensor         = Color(hex: "#2874A6")
