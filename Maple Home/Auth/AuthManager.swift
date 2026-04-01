@@ -72,6 +72,13 @@ final class AuthManager {
         print("[Maple] Token saved to keychain successfully")
     }
 
+    /// Switch to a different server URL (e.g., local to remote) while preserving auth tokens
+    func switchServerURL(_ newURL: URL) throws {
+        self.serverURL = newURL
+        try KeychainStore.save(newURL.absoluteString, for: KeychainStore.Keys.serverURL)
+        print("[Maple] Switched server URL to: \(newURL.absoluteString)")
+    }
+
     /// Attempt a silent token refresh
     func refreshTokenIfNeeded() async throws {
         guard let serverURL,

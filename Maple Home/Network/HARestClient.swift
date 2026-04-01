@@ -84,6 +84,24 @@ struct HARestClient {
         return try JSONDecoder().decode(HATokenResponse.self, from: data)
     }
 
+    /// Check if a remote URL is reachable as a HA instance
+    static func checkReachability(url: URL, token: String, timeout: TimeInterval = 5) async -> Bool {
+        var apiURL = url
+        apiURL.appendPathComponent("api/")
+
+        var request = URLRequest(url: apiURL)
+        request.timeoutInterval = timeout
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+
+        do {
+            let (_, response) = try await URLSession.shared.data(for: request)
+            guard let http = response as? HTTPURLResponse else { return false }
+            return http.statusCode == 200 || http.statusCode == 401
+        } catch {
+            return false
+        }
+    }
+
     /// Refresh an expired token
     func refreshToken(_ refreshToken: String, clientId: String) async throws -> HATokenResponse {
         var url = serverURL

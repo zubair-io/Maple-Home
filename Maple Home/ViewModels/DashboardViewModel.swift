@@ -40,6 +40,9 @@ final class DashboardViewModel {
     var entities: [String: HAEntity] = [:]  // keyed by entity_id
     var exposedEntityIds: Set<String> = []
 
+    // Remote access
+    var remoteAccess: HARemoteAccess = .empty
+
     // Error
     var commandError: CommandError?
     var showCommandError: Bool = false
@@ -158,6 +161,7 @@ final class DashboardViewModel {
             try await subscribeToStateChanges()
             try await subscribeToRegistryEvents()
             scheduleCacheSave()
+            Task { await loadRemoteAccessInfo() }
             print("[Maple] All data loaded, \(entities.count) entities, \(areas.count) areas")
         } catch let error as ConnectionError where error == .authFailed {
             print("[Maple] Auth invalid — signing out")
@@ -525,6 +529,87 @@ final class DashboardViewModel {
                 }
             }
         }
+    }
+
+    // MARK: - Remote Access
+
+    private func loadRemoteAccessInfo() async {
+        guard let token = AuthManager.shared.token else { return }
+
+        var externalURL: URL?
+        var internalURL: URL?
+        var cloudURL: URL?
+        var cloudConnected = false
+
+        // Fetch config for external_url / internal_url
+        do {
+            let configResponse = try await client.sendCommand(type: "config/get")
+            if let result = configResponse.result?.value as? [String: Any] {
+                if let ext = result["external_url"] as? String, let url = URL(string: ext) {
+                    externalURL = url
+                }
+                if let int = result["internal_url"] as? String, let url = URL(string: int) {
+                    internalURL = url
+                }
+            }
+        } catch {
+            print("[Maple] Failed to fetch config: \(error)")
+        }
+
+        // Fetch cloud/status for Nabu Casa remote URL
+        do {
+            let cloudResponse = try await client.sendCommand(type: "cloud/status")
+            if let result = cloudResponse.result?.value as? [String: Any] {
+                let loggedIn = result["logged_in"] as? Bool ?? false
+                if loggedIn {
+                    cloudConnected = result["remote_connected"] as? Bool ?? false
+                    // remote_url may be top-level or under remote_certificate
+                    if let urlStr = result["remote_url"] as? String, let url = URL(string: urlStr) {
+                        cloudURL = url
+                    } else if let cert = result["remote_certificate"] as? [String: Any],
+                              let urlStr = cert["remote_url"] as? String, let url = URL(string: urlStr) {
+                        cloudURL = url
+                    }
+                }
+            }
+        } catch {
+            // Expected if cloud component is not loaded
+            print("[Maple] Cloud status not available: \(error)")
+        }
+
+        // Check reachability in parallel
+        async let extReachable: Bool = {
+            guard let url = externalURL else { return false }
+            return await HARestClient.checkReachability(url: url, token: token)
+        }()
+        async let cloudReachable: Bool = {
+            guard let url = cloudURL else { return false }
+            return await HARestClient.checkReachability(url: url, token: token)
+        }()
+
+        let extResult = await extReachable
+        let cloudResult = await cloudReachable
+
+        remoteAccess = HARemoteAccess(
+            externalURL: externalURL,
+            internalURL: internalURL,
+            cloudURL: cloudURL,
+            cloudConnected: cloudConnected,
+            externalReachable: extResult,
+            cloudReachable: cloudResult
+        )
+
+        print("[Maple] Remote access: external=\(externalURL?.absoluteString ?? "none") reachable=\(extResult), cloud=\(cloudURL?.absoluteString ?? "none") reachable=\(cloudResult)")
+    }
+
+    func switchToURL(_ url: URL) async {
+        disconnect()
+        do {
+            try AuthManager.shared.switchServerURL(url)
+        } catch {
+            print("[Maple] Failed to save new URL: \(error)")
+        }
+        await connect()
     }
 
     // MARK: - Cache
